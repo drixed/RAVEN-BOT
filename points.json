@@ -1,0 +1,293 @@
+{
+  "window_title": "Raven2",
+  "window_hwnd": 6360636,
+  "points": [
+    {
+      "name": "tmp",
+      "rel_x": 103,
+      "rel_y": 478
+    }
+  ],
+  "active_name": "tmp",
+  "routes": [
+    {
+      "name": "tmp",
+      "steps": [
+        {
+          "kind": "click",
+          "rel_x": 103,
+          "rel_y": 478,
+          "button": "left",
+          "key": "",
+          "delay_s": 0.15
+        }
+      ]
+    },
+    {
+      "name": "route_1",
+      "steps": [
+        {
+          "kind": "click",
+          "rel_x": 1880,
+          "rel_y": 62,
+          "button": "left",
+          "key": "",
+          "delay_s": 1.5038455000030808
+        },
+        {
+          "kind": "click",
+          "rel_x": 1885,
+          "rel_y": 315,
+          "button": "left",
+          "key": "",
+          "delay_s": 1.0116886000032537
+        },
+        {
+          "kind": "click",
+          "rel_x": 1200,
+          "rel_y": 713,
+          "button": "left",
+          "key": "",
+          "delay_s": 2.2857807999826036
+        },
+        {
+          "kind": "click",
+          "rel_x": 1885,
+          "rel_y": 76,
+          "button": "left",
+          "key": "",
+          "delay_s": 0.8291821000166237
+        },
+        {
+          "kind": "click",
+          "rel_x": 1865,
+          "rel_y": 88,
+          "button": "left",
+          "key": "",
+          "delay_s": 1.0645071999751963
+        },
+        {
+          "kind": "click",
+          "rel_x": 1873,
+          "rel_y": 83,
+          "button": "left",
+          "key": "",
+          "delay_s": 0.5173473000177182
+        }
+      ]
+    }
+  ],
+  "active_route_name": "route_1",
+  "profiles": [
+    {
+      "name": "default",
+      "routes": [
+        {
+          "name": "tmp",
+          "steps": [
+            {
+              "kind": "click",
+              "rel_x": 103,
+              "rel_y": 478,
+              "button": "left",
+              "key": "",
+              "delay_s": 0.15
+            }
+          ]
+        },
+        {
+          "name": "route_1",
+          "steps": [
+            {
+              "kind": "click",
+              "rel_x": 1880,
+              "rel_y": 62,
+              "button": "left",
+              "key": "",
+              "delay_s": 1.5038455000030808
+            },
+            {
+              "kind": "click",
+              "rel_x": 1885,
+              "rel_y": 315,
+              "button": "left",
+              "key": "",
+              "delay_s": 1.0116886000032537
+            },
+            {
+              "kind": "click",
+              "rel_x": 1200,
+              "rel_y": 713,
+              "button": "left",
+              "key": "",
+              "delay_s": 2.2857807999826036
+            },
+            {
+              "kind": "click",
+              "rel_x": 1885,
+              "rel_y": 76,
+              "button": "left",
+              "key": "",
+              "delay_s": 0.8291821000166237
+            },
+            {
+              "kind": "click",
+              "rel_x": 1865,
+              "rel_y": 88,
+              "button": "left",
+              "key": "",
+              "delay_s": 1.0645071999751963
+            },
+            {
+              "kind": "click",
+              "rel_x": 1873,
+              "rel_y": 83,
+              "button": "left",
+              "key": "",
+              "delay_s": 0.5173473000177182
+            }
+          ]
+        }
+      ],
+      "setup_route_name": null,
+      "farm_route_name": "route_1"
+    },
+    {
+      "name": "1",
+      "routes": [],
+      "setup_route_name": null,
+      "farm_route_name": null
+    }
+  ],
+  "active_profile_name": "default",
+  "radar_roi": {
+    "x": 1501,
+    "y": 111,
+    "w": 354,
+    "h": 197
+  },
+  "enemy_hsv": {
+    "h1_low": 0,
+    "s1_low": 140,
+    "v1_low": 120,
+    "h1_high": 10,
+    "s1_high": 255,
+    "v1_high": 255,
+    "h2_low": 170,
+    "s2_low": 140,
+    "v2_low": 120,
+    "h2_high": 180,
+    "s2_high": 255,
+    "v2_high": 255,
+    "min_pixels": 25
+  },
+  "detect_mode": "diff",
+  "empty_radar_path": "radar_empty.png",
+  "empty_text_path": "radar_empty_text.png",
+  "empty_text_roi": {
+    "x": 1536,
+    "y": 115,
+    "w": 352,
+    "h": 195
+  },
+  "empty_text_threshold": 0.86,
+  "diff_min_changed_pixels": 400,
+  "diff_threshold": 22,
+  "teleport_key": "f4",
+  "key_hold_s": 0.06,
+  "tp_on_enemy_enabled": false,
+  "radar_detect_enabled": false,
+  "post_tp_action": "press_r",
+  "post_tp_key": "r",
+  "post_tp_delay_s": 0.25,
+  "auto_confirm_enabled": true,
+  "auto_confirm_key": "y",
+  "auto_confirm_interval_s": 0.8,
+  "focus_steal_enabled": true,
+  "tp_focus_steal_enabled": true,
+  "farm_without_route": true,
+  "detect_confirm_streak": 3,
+  "min_tp_cooldown_s": 10.0,
+  "empty_match_threshold": 0.88,
+  "teleport_wait_s": 60,
+  "check_interval_s": 0.25,
+  "loop_jitter_s": 0.05,
+  "move_time_min_s": 0.02,
+  "move_time_max_s": 0.06,
+  "route_delay_min_s": 0.0,
+  "route_delay_max_s": 0.03,
+  "auto_buy_potions_enabled": false,
+  "auto_buy_potions_threshold": 300,
+  "auto_buy_potions_roi": {
+    "x": 922,
+    "y": 1340,
+    "w": 77,
+    "h": 36
+  },
+  "auto_buy_potions_route_name": null,
+  "auto_buy_city_wait_s": 8.0,
+  "auto_buy_check_interval_s": 5.0,
+  "auto_buy_cooldown_s": 60.0,
+  "auto_buy_route_mode_only": true,
+  "auto_buy_return_to_farm": true,
+  "enemy_alert_enabled": true,
+  "enemy_alert_beeps": 3,
+  "enemy_alert_interval_s": 8.0,
+  "enemy_alert_sound_path": "",
+  "log_to_file_enabled": false,
+  "log_dir": "logs",
+  "pause_hotkey": "end",
+  "menu_autoclose_enabled": false,
+  "menu_autoclose_key": "esc",
+  "menu_autoclose_attempts": 2,
+  "menu_autoclose_roi": {
+    "x": 0,
+    "y": 0,
+    "w": 200,
+    "h": 200
+  },
+  "menu_autoclose_tpl_path": "menu_open_tpl.png",
+  "menu_autoclose_threshold": 0.86,
+  "menu_autoclose_cooldown_s": 1.0,
+  "death_detect_enabled": false,
+  "death_roi": {
+    "x": 89,
+    "y": 9,
+    "w": 308,
+    "h": 36
+  },
+  "death_tpl_path": "death_tpl.png",
+  "death_threshold": 0.86,
+  "death_route_name": null,
+  "death_cooldown_s": 19.0,
+  "schedule_enabled": false,
+  "schedule_start_hhmm": "02:00",
+  "schedule_duration_h": 8.0,
+  "schedule_mode": "route",
+  "schedule_daily": true,
+  "schedule_last_start_date": "",
+  "damage_tp_enabled": true,
+  "damage_icon_roi": {
+    "x": 393,
+    "y": 0,
+    "w": 57,
+    "h": 77
+  },
+  "damage_icon_tpl_path": "damage_icon_tpl.png",
+  "damage_icon_threshold": 0.86,
+  "damage_icon_normal_tpl_path": "damage_icon_normal_tpl.png",
+  "damage_icon_normal_threshold": 0.86,
+  "damage_icon_margin": 0.04,
+  "hp_bar_roi": {
+    "x": 84,
+    "y": 14,
+    "w": 309,
+    "h": 28
+  },
+  "hp_tp_enabled": false,
+  "hp_tp_threshold_pct": 70,
+  "damage_tp_press_count": 5,
+  "damage_tp_press_interval_s": 0.12,
+  "damage_tp_cooldown_s": 8.0,
+  "ui_theme": "cyborg"
+}
