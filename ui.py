@@ -134,6 +134,110 @@ class UI:
 
         tick(max(2, int(times) * 2))
 
+    def _install_paste_support(self, entry) -> None:
+        """
+        Ensure clipboard shortcuts work reliably (Ctrl+A/C/X/V, Shift+Insert + right-click menu),
+        even when ttk widgets / focus quirks interfere.
+        """
+        if entry is None:
+            return
+
+        def do_paste(_evt=None):
+            try:
+                entry.focus_set()
+            except Exception:
+                pass
+            try:
+                entry.event_generate("<<Paste>>")
+                return "break"
+            except Exception:
+                pass
+            try:
+                txt = self.root.clipboard_get()
+                entry.insert("insert", txt)
+            except Exception:
+                pass
+            return "break"
+
+        def do_select_all(_evt=None):
+            try:
+                entry.focus_set()
+            except Exception:
+                pass
+            try:
+                entry.selection_range(0, "end")
+                entry.icursor("end")
+            except Exception:
+                pass
+            return "break"
+
+        def do_copy(_evt=None):
+            try:
+                entry.focus_set()
+            except Exception:
+                pass
+            try:
+                if entry.selection_present():
+                    s = entry.selection_get()
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(s)
+            except Exception:
+                pass
+            return "break"
+
+        def do_cut(_evt=None):
+            do_copy()
+            try:
+                if entry.selection_present():
+                    entry.delete("sel.first", "sel.last")
+            except Exception:
+                pass
+            return "break"
+
+        # Layout-agnostic Ctrl shortcuts (keycode works even on RU layout)
+        def on_keypress(evt):
+            try:
+                is_ctrl = bool(int(getattr(evt, "state", 0)) & 0x0004)
+            except Exception:
+                is_ctrl = False
+            if not is_ctrl:
+                return
+            kc = int(getattr(evt, "keycode", 0) or 0)
+            # A=65, C=67, V=86, X=88 on Windows (layout independent)
+            if kc == 65:
+                return do_select_all()
+            if kc == 67:
+                return do_copy()
+            if kc == 86:
+                return do_paste()
+            if kc == 88:
+                return do_cut()
+            return
+
+        try:
+            entry.bind("<KeyPress>", on_keypress, add="+")
+            entry.bind("<Shift-Insert>", do_paste, add="+")
+        except Exception:
+            pass
+
+        def on_rclick(evt):
+            try:
+                menu = tk.Menu(entry, tearoff=0)
+                menu.add_command(label="Вставить", command=lambda: do_paste())
+                menu.add_separator()
+                menu.add_command(label="Выделить всё", command=lambda: do_select_all())
+                menu.add_command(label="Копировать", command=lambda: do_copy())
+                menu.add_command(label="Вырезать", command=lambda: do_cut())
+                menu.tk_popup(int(evt.x_root), int(evt.y_root))
+            except Exception:
+                pass
+            return "break"
+
+        try:
+            entry.bind("<Button-3>", on_rclick)
+        except Exception:
+            pass
+
     def _show_pil_popup(self, pil: Image.Image, title: str = "Preview") -> None:
         try:
             top = tk.Toplevel(self.root)
@@ -396,6 +500,17 @@ class UI:
         self.status_var = tk.StringVar(value="Статус: остановлен")
         self.status_label = tb.Label(header, textvariable=self.status_var, bootstyle="danger")
         self.status_label.grid(row=0, column=2, sticky="e")
+
+        # Mini overlay toggle
+        self._mini_win: tk.Toplevel | None = None
+        self._mini_status_var = tk.StringVar(value="Бот: остановлен")
+        self._mini_game_var = tk.StringVar(value="Окно игры: ?")
+        self._mini_action_var = tk.StringVar(value="Действие: ?")
+        self._mini_detect_var = tk.StringVar(value="Детект: ?")
+        self._mini_toast_var = tk.StringVar(value="")
+        tb.Button(header, text="Мини", bootstyle="secondary-outline", command=self._toggle_mini).grid(
+            row=0, column=3, padx=(12, 0), sticky="e"
+        )
 
         content = tb.Panedwindow(self.root, orient="horizontal")
         content.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
@@ -746,27 +861,32 @@ class UI:
         row1 = tb.Frame(settings)
         row1.grid(row=4, column=0, sticky="ew")
         row1.grid_columnconfigure(3, weight=1)
-        tb.Label(row1, text="Ожидание после телепорта (сек)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
-        self.wait_var = tk.IntVar(value=int(self.store.teleport_wait_s))
-        tb.Spinbox(row1, from_=5, to=3600, textvariable=self.wait_var, width=10).grid(row=0, column=1, padx=(10, 0))
+        tb.Label(row1, text="Ожидание после телепорта (сек) от/до", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.wait_from_var = tk.IntVar(value=int(getattr(self.store, "teleport_wait_min_s", getattr(self.store, "teleport_wait_s", 60))))
+        self.wait_to_var = tk.IntVar(value=int(getattr(self.store, "teleport_wait_max_s", getattr(self.store, "teleport_wait_s", 60))))
+        tb.Spinbox(row1, from_=0, to=3600, textvariable=self.wait_from_var, width=7).grid(row=0, column=1, padx=(10, 4))
+        tb.Spinbox(row1, from_=0, to=3600, textvariable=self.wait_to_var, width=7).grid(row=0, column=2, padx=(4, 0))
         tb.Label(row1, text="Удержание (сек)", bootstyle="secondary").grid(row=0, column=3, padx=(18, 0), sticky="w")
         self.key_hold_var = tk.DoubleVar(value=float(getattr(self.store, "key_hold_s", 0.06)))
         tb.Spinbox(row1, from_=0.01, to=0.30, increment=0.01, textvariable=self.key_hold_var, width=8).grid(
             row=0, column=4, padx=(10, 0)
         )
-        tb.Label(row1, text="Delay шагов от/до (сек)", bootstyle="secondary").grid(row=0, column=5, padx=(10, 0), sticky="w")
+        # Delay between route steps (moved to next line to avoid overflow)
+        row1b = tb.Frame(settings)
+        row1b.grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        tb.Label(row1b, text="Delay шагов от/до (сек)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.route_delay_from_var = tk.DoubleVar(value=float(getattr(self.store, "route_delay_min_s", 0.0)))
         self.route_delay_to_var = tk.DoubleVar(value=float(getattr(self.store, "route_delay_max_s", 0.0)))
-        tb.Spinbox(row1, from_=0.0, to=10.0, increment=0.01, textvariable=self.route_delay_from_var, width=7).grid(
-            row=0, column=6, padx=(6, 4)
+        tb.Spinbox(row1b, from_=0.0, to=10.0, increment=0.01, textvariable=self.route_delay_from_var, width=7).grid(
+            row=0, column=1, padx=(10, 4)
         )
-        tb.Spinbox(row1, from_=0.0, to=10.0, increment=0.01, textvariable=self.route_delay_to_var, width=7).grid(
-            row=0, column=7, padx=(4, 0)
+        tb.Spinbox(row1b, from_=0.0, to=10.0, increment=0.01, textvariable=self.route_delay_to_var, width=7).grid(
+            row=0, column=2, padx=(4, 0)
         )
 
         # Teleport key
         row2 = tb.Frame(settings)
-        row2.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        row2.grid(row=6, column=0, sticky="ew", pady=(10, 0))
         tb.Label(row2, text="Клавиша телепорта", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.tp_key_var = tk.StringVar(value=str(getattr(self.store, "teleport_key", "f4")))
         common_keys = (
@@ -791,10 +911,13 @@ class UI:
             command=self._on_tp_toggle_changed,
         ).grid(row=0, column=2, padx=(18, 0))
         self.radar_detect_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "radar_detect_enabled", True)))
-        tb.Checkbutton(row2, text="Детект радара", variable=self.radar_detect_enabled_var, bootstyle="round-toggle").grid(
-            row=0, column=4, padx=(18, 0)
-        )
-        tb.Button(row2, text="Вкл/Выкл", command=self._on_toggle_detect, bootstyle="outline").grid(row=0, column=5, padx=(10, 0))
+        tb.Checkbutton(
+            row2,
+            text="Детект радара",
+            variable=self.radar_detect_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_radar_detect_toggle_changed,
+        ).grid(row=0, column=4, padx=(18, 0))
 
         # Make TP focus toggle always visible (user often doesn't scroll).
         self.tp_focus_steal_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "tp_focus_steal_enabled", True)))
@@ -809,7 +932,7 @@ class UI:
         # Enemy sound alert
         # Place on its own row below teleport controls to avoid overlap.
         row2_sound = tb.Frame(settings)
-        row2_sound.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        row2_sound.grid(row=7, column=0, sticky="ew", pady=(10, 0))
         row2_sound.grid_columnconfigure(6, weight=1)
         tb.Label(row2_sound, text="Сигнал при враге", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.enemy_alert_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "enemy_alert_enabled", False)))
@@ -841,8 +964,50 @@ class UI:
             command=self._on_pick_enemy_alert_wav,
         ).grid(row=1, column=6, padx=(10, 0), pady=(6, 0), sticky="w")
 
+        # Telegram (send radar screenshot when attacked) — compact layout (fits on small widths)
+        tg_box = tb.Labelframe(settings, text="Telegram (скрин радара при атаке)", padding=10, bootstyle="secondary")
+        tg_box.grid(row=8, column=0, sticky="ew", pady=(10, 0))
+        tg_box.grid_columnconfigure(1, weight=1)
+
+        self.telegram_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "telegram_enabled", False)))
+        self.telegram_interval_var = tk.DoubleVar(value=float(getattr(self.store, "telegram_interval_s", 30.0)))
+        self.telegram_chat_id_var = tk.StringVar(value=str(getattr(self.store, "telegram_chat_id", "") or ""))
+        self.telegram_token_var = tk.StringVar(value=str(getattr(self.store, "telegram_bot_token", "") or ""))
+
+        row_tg1 = tb.Frame(tg_box)
+        row_tg1.grid(row=0, column=0, columnspan=2, sticky="ew")
+        tb.Checkbutton(
+            row_tg1,
+            text="Отправлять скрин при атаке",
+            variable=self.telegram_enabled_var,
+            bootstyle="round-toggle",
+        ).pack(side="left")
+        tb.Label(row_tg1, text="Интервал (сек)", bootstyle="secondary").pack(side="left", padx=(14, 0))
+        tb.Spinbox(row_tg1, from_=5.0, to=3600.0, increment=1.0, textvariable=self.telegram_interval_var, width=8).pack(
+            side="left", padx=(8, 0)
+        )
+        tb.Button(row_tg1, text="Тест", bootstyle="outline", command=self._on_test_telegram_send).pack(
+            side="right"
+        )
+
+        row_tg2 = tb.Frame(tg_box)
+        row_tg2.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        row_tg2.grid_columnconfigure(1, weight=0)
+        tb.Label(row_tg2, text="Chat ID", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.telegram_chat_id_entry = tb.Entry(row_tg2, textvariable=self.telegram_chat_id_var, width=18)
+        self.telegram_chat_id_entry.grid(row=0, column=1, padx=(10, 0), sticky="w")
+        self._install_paste_support(self.telegram_chat_id_entry)
+
+        row_tg3 = tb.Frame(tg_box)
+        row_tg3.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        row_tg3.grid_columnconfigure(1, weight=0)
+        tb.Label(row_tg3, text="Bot Token", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.telegram_token_entry = tb.Entry(row_tg3, textvariable=self.telegram_token_var, show="•", width=32)
+        self.telegram_token_entry.grid(row=0, column=1, padx=(10, 0), sticky="w")
+        self._install_paste_support(self.telegram_token_entry)
+
         row2b = tb.Frame(settings)
-        row2b.grid(row=7, column=0, sticky="ew", pady=(10, 0))
+        row2b.grid(row=9, column=0, sticky="ew", pady=(10, 0))
         tb.Label(row2b, text="После ТП", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.post_tp_action_var = tk.StringVar(value=str(getattr(self.store, "post_tp_action", "press_r")))
         tb.Combobox(
@@ -862,7 +1027,7 @@ class UI:
         )
 
         row2c = tb.Frame(settings)
-        row2c.grid(row=8, column=0, sticky="ew", pady=(10, 0))
+        row2c.grid(row=10, column=0, sticky="ew", pady=(10, 0))
         self.auto_confirm_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "auto_confirm_enabled", True)))
         tb.Checkbutton(row2c, text="Авто-подтверждать окна", variable=self.auto_confirm_enabled_var, bootstyle="round-toggle").grid(
             row=0, column=0, sticky="w"
@@ -877,7 +1042,7 @@ class UI:
         )
 
         row2c2 = tb.Frame(settings)
-        row2c2.grid(row=9, column=0, sticky="ew", pady=(10, 0))
+        row2c2.grid(row=11, column=0, sticky="ew", pady=(10, 0))
         self.focus_steal_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "focus_steal_enabled", True)))
         tb.Checkbutton(
             row2c2,
@@ -911,7 +1076,8 @@ class UI:
         self._bind_unsaved(self.schedule_start_var)
         self._bind_unsaved(self.schedule_duration_var)
         self._bind_unsaved(self.schedule_mode_var)
-        self._bind_unsaved(self.wait_var)
+        self._bind_unsaved(self.wait_from_var)
+        self._bind_unsaved(self.wait_to_var)
         self._bind_unsaved(self.key_hold_var)
         self._bind_unsaved(self.route_delay_from_var)
         self._bind_unsaved(self.route_delay_to_var)
@@ -1145,7 +1311,12 @@ class UI:
         empty_text = tb.Labelframe(detect_inner, text="По фразе 'Нет Цель поиска'", padding=12, bootstyle="secondary")
         empty_text.grid(row=0, column=0, sticky="ew")
         detect_inner.grid_columnconfigure(0, weight=1)
-        tb.Label(empty_text, text="Шаг 1: выбери Text ROI. Шаг 2: сделай скриншот текста.", bootstyle="secondary").grid(
+        tb.Label(
+            empty_text,
+            text="Нажми «Радар: область (ROI)» → выдели область текста → отпусти мышь (сохранится сразу).\n"
+            "Далее нажми «Радар: шаблон 'Нет Цель поиска'» (сохранит шаблон).",
+            bootstyle="secondary",
+        ).grid(
             row=0, column=0, sticky="w"
         )
         rowtx = tb.Frame(empty_text)
@@ -1159,12 +1330,12 @@ class UI:
         tb.Spinbox(rowtx, from_=0, to=10000, textvariable=self.text_roi_y, width=6).grid(row=0, column=2, padx=6)
         tb.Spinbox(rowtx, from_=1, to=10000, textvariable=self.text_roi_w, width=6).grid(row=0, column=3, padx=6)
         tb.Spinbox(rowtx, from_=1, to=10000, textvariable=self.text_roi_h, width=6).grid(row=0, column=4, padx=6)
-        tb.Button(empty_text, text="Выбрать Text ROI мышью", command=self._on_pick_text_roi, bootstyle="primary").grid(
+        tb.Button(empty_text, text="Радар: область (ROI)", command=self._on_pick_text_roi, bootstyle="primary").grid(
             row=2, column=0, sticky="ew", pady=(10, 0)
         )
         tb.Button(
             empty_text,
-            text="Сделать скриншот 'Нет Цель поиска'",
+            text="Радар: шаблон 'Нет Цель поиска'",
             command=self._on_capture_empty_text,
             bootstyle="primary",
         ).grid(row=3, column=0, sticky="ew", pady=(10, 0))
@@ -1293,14 +1464,20 @@ class UI:
         ).grid(row=0, column=0, sticky="w")
 
         self.damage_tp_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "damage_tp_enabled", False)))
-        tb.Checkbutton(dmg_box, text="Включить ТП по урону", variable=self.damage_tp_enabled_var, bootstyle="round-toggle").grid(
+        tb.Checkbutton(
+            dmg_box,
+            text="Включить ТП по урону",
+            variable=self.damage_tp_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_damage_tp_toggle_changed,
+        ).grid(
             row=1, column=0, sticky="w", pady=(10, 0)
         )
 
-        # Attacked icon ROI + template
+        # Attacked/Normal icon ROIs + templates
         rowa = tb.Frame(dmg_box)
         rowa.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        tb.Label(rowa, text="Область иконки атаки и корпуса (x,y,w,h)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        tb.Label(rowa, text="ROI мечей (x,y,w,h)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.damage_icon_roi_x = tk.IntVar(value=int(getattr(self.store.damage_icon_roi, "x", 0)))
         self.damage_icon_roi_y = tk.IntVar(value=int(getattr(self.store.damage_icon_roi, "y", 0)))
         self.damage_icon_roi_w = tk.IntVar(value=int(getattr(self.store.damage_icon_roi, "w", 1)))
@@ -1309,24 +1486,30 @@ class UI:
         tb.Spinbox(rowa, from_=0, to=10000, textvariable=self.damage_icon_roi_y, width=6).grid(row=0, column=2, padx=6)
         tb.Spinbox(rowa, from_=1, to=10000, textvariable=self.damage_icon_roi_w, width=6).grid(row=0, column=3, padx=6)
         tb.Spinbox(rowa, from_=1, to=10000, textvariable=self.damage_icon_roi_h, width=6).grid(row=0, column=4, padx=6)
-        tb.Button(
-            dmg_box,
-            text="Выбрать область иконки атаки и корпуса",
-            command=self._on_pick_damage_icon_roi,
-            bootstyle="primary",
-        ).grid(
+        tb.Button(dmg_box, text="Мечи: ROI+шаблон", command=self._on_pick_swords_roi_and_tpl, bootstyle="primary").grid(
             row=3, column=0, sticky="ew", pady=(10, 0)
         )
-        tb.Button(dmg_box, text="Сделать шаблон иконки атаки", command=self._on_capture_damage_icon_tpl, bootstyle="outline").grid(
-            row=4, column=0, sticky="ew", pady=(8, 0)
-        )
+        # tpl is captured automatically after ROI selection
 
-        tb.Button(dmg_box, text="Сделать шаблон обычной иконки", command=self._on_capture_damage_icon_normal_tpl, bootstyle="outline").grid(
-            row=5, column=0, sticky="ew", pady=(8, 0)
+        rowa_norm = tb.Frame(dmg_box)
+        rowa_norm.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        tb.Label(rowa_norm, text="ROI корпуса (x,y,w,h)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.damage_icon_norm_roi_x = tk.IntVar(value=int(getattr(getattr(self.store, "damage_icon_normal_roi", self.store.damage_icon_roi), "x", 0)))
+        self.damage_icon_norm_roi_y = tk.IntVar(value=int(getattr(getattr(self.store, "damage_icon_normal_roi", self.store.damage_icon_roi), "y", 0)))
+        self.damage_icon_norm_roi_w = tk.IntVar(value=int(getattr(getattr(self.store, "damage_icon_normal_roi", self.store.damage_icon_roi), "w", 1)))
+        self.damage_icon_norm_roi_h = tk.IntVar(value=int(getattr(getattr(self.store, "damage_icon_normal_roi", self.store.damage_icon_roi), "h", 1)))
+        tb.Spinbox(rowa_norm, from_=0, to=10000, textvariable=self.damage_icon_norm_roi_x, width=6).grid(row=0, column=1, padx=(12, 6))
+        tb.Spinbox(rowa_norm, from_=0, to=10000, textvariable=self.damage_icon_norm_roi_y, width=6).grid(row=0, column=2, padx=6)
+        tb.Spinbox(rowa_norm, from_=1, to=10000, textvariable=self.damage_icon_norm_roi_w, width=6).grid(row=0, column=3, padx=6)
+        tb.Spinbox(rowa_norm, from_=1, to=10000, textvariable=self.damage_icon_norm_roi_h, width=6).grid(row=0, column=4, padx=6)
+
+        tb.Button(dmg_box, text="Корпус: ROI+шаблон", command=self._on_pick_body_roi_and_tpl, bootstyle="primary").grid(
+            row=6, column=0, sticky="ew", pady=(10, 0)
         )
+        # tpl is captured automatically after ROI selection
 
         rowa2 = tb.Frame(dmg_box)
-        rowa2.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        rowa2.grid(row=8, column=0, sticky="ew", pady=(10, 0))
         tb.Label(rowa2, text="Порог мечей", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.damage_icon_threshold_var = tk.DoubleVar(value=float(getattr(self.store, "damage_icon_threshold", 0.86)))
         tb.Spinbox(rowa2, from_=0.50, to=0.99, increment=0.01, textvariable=self.damage_icon_threshold_var, width=8).grid(
@@ -1345,9 +1528,13 @@ class UI:
 
         # HP bar ROI + threshold + progressbar
         self.hp_tp_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "hp_tp_enabled", True)))
-        tb.Checkbutton(dmg_box, text="ТП только если HP ниже порога", variable=self.hp_tp_enabled_var, bootstyle="round-toggle").grid(
-            row=7, column=0, sticky="w", pady=(10, 0)
-        )
+        tb.Checkbutton(
+            dmg_box,
+            text="ТП только если HP ниже порога",
+            variable=self.hp_tp_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_hp_tp_toggle_changed,
+        ).grid(row=9, column=0, sticky="w", pady=(10, 0))
         rowh = tb.Frame(dmg_box)
         rowh.grid(row=8, column=0, sticky="ew", pady=(10, 0))
         tb.Label(rowh, text="ROI HP полоски (x,y,w,h)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
@@ -2293,6 +2480,17 @@ class UI:
             self.store.enemy_alert_sound_path = str(getattr(self, "enemy_alert_sound_path_var").get() or "").strip()
         except Exception:
             pass
+        # Telegram
+        try:
+            self.store.telegram_enabled = bool(getattr(self, "telegram_enabled_var").get())
+            self.store.telegram_interval_s = safe_float(
+                getattr(self, "telegram_interval_var"), float(getattr(self.store, "telegram_interval_s", 30.0))
+            )
+            self.store.telegram_chat_id = str(getattr(self, "telegram_chat_id_var").get() or "").strip()
+            self.store.telegram_bot_token = str(getattr(self, "telegram_token_var").get() or "").strip()
+            self.store.telegram_send_on_attacked = True
+        except Exception:
+            pass
         self.store.auto_confirm_enabled = bool(self.auto_confirm_enabled_var.get())
         self.store.auto_confirm_key = (self.auto_confirm_key_var.get().strip() or "y").lower()
         self.store.auto_confirm_interval_s = safe_float(
@@ -2301,7 +2499,14 @@ class UI:
         self.store.focus_steal_enabled = bool(getattr(self, "focus_steal_enabled_var").get())
         self.store.tp_focus_steal_enabled = bool(getattr(self, "tp_focus_steal_enabled_var").get())
         self.store.farm_without_route = bool(self.farm_without_route_var.get())
-        self.store.teleport_wait_s = safe_int(self.wait_var, getattr(self.store, "teleport_wait_s", 60))
+        w_from = safe_int(self.wait_from_var, int(getattr(self.store, "teleport_wait_min_s", getattr(self.store, "teleport_wait_s", 60))))
+        w_to = safe_int(self.wait_to_var, int(getattr(self.store, "teleport_wait_max_s", getattr(self.store, "teleport_wait_s", 60))))
+        if w_to < w_from:
+            w_from, w_to = w_to, w_from
+        self.store.teleport_wait_min_s = int(w_from)
+        self.store.teleport_wait_max_s = int(w_to)
+        # legacy mirror
+        self.store.teleport_wait_s = int(w_from)
         self.store.empty_text_roi.x = safe_int(self.text_roi_x, int(self.store.empty_text_roi.x))
         self.store.empty_text_roi.y = safe_int(self.text_roi_y, int(self.store.empty_text_roi.y))
         self.store.empty_text_roi.w = safe_int(self.text_roi_w, int(self.store.empty_text_roi.w))
@@ -2362,6 +2567,19 @@ class UI:
             self.store.damage_icon_roi.y = safe_int(self.damage_icon_roi_y, int(self.store.damage_icon_roi.y))
             self.store.damage_icon_roi.w = safe_int(self.damage_icon_roi_w, int(self.store.damage_icon_roi.w))
             self.store.damage_icon_roi.h = safe_int(self.damage_icon_roi_h, int(self.store.damage_icon_roi.h))
+            # Normal(body) ROI can differ; fall back to swords ROI if missing.
+            if not hasattr(self.store, "damage_icon_normal_roi"):
+                try:
+                    self.store.damage_icon_normal_roi = RadarROI.from_dict(self.store.damage_icon_roi.as_dict())  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            try:
+                self.store.damage_icon_normal_roi.x = safe_int(self.damage_icon_norm_roi_x, int(self.store.damage_icon_normal_roi.x))  # type: ignore[attr-defined]
+                self.store.damage_icon_normal_roi.y = safe_int(self.damage_icon_norm_roi_y, int(self.store.damage_icon_normal_roi.y))  # type: ignore[attr-defined]
+                self.store.damage_icon_normal_roi.w = safe_int(self.damage_icon_norm_roi_w, int(self.store.damage_icon_normal_roi.w))  # type: ignore[attr-defined]
+                self.store.damage_icon_normal_roi.h = safe_int(self.damage_icon_norm_roi_h, int(self.store.damage_icon_normal_roi.h))  # type: ignore[attr-defined]
+            except Exception:
+                pass
             self.store.damage_icon_threshold = safe_float(
                 self.damage_icon_threshold_var, float(getattr(self.store, "damage_icon_threshold", 0.86))
             )
@@ -2404,44 +2622,6 @@ class UI:
         if hwnd == 0:
             messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
             return
-        # Reuse generic ROI selector and store into potion ROI vars
-        cap = self._capture_client_image_pil(hwnd)
-        if cap is None:
-            # Fallback: temporarily hide UI, focus game, capture from screen, then restore UI.
-            was_iconified = False
-            try:
-                try:
-                    if str(self.root.state()) != "iconic":
-                        self.root.iconify()
-                        was_iconified = True
-                except Exception:
-                    pass
-
-                bring_window_to_foreground(hwnd)
-                time.sleep(0.18)
-
-                cl, ct, cr, cb = win32gui.GetClientRect(hwnd)
-                (left, top) = win32gui.ClientToScreen(hwnd, (int(cl), int(ct)))
-                (right, bottom) = win32gui.ClientToScreen(hwnd, (int(cr), int(cb)))
-                w = max(1, int(right - left))
-                h = max(1, int(bottom - top))
-                with mss() as sct:
-                    img = np.array(sct.grab({"left": int(left), "top": int(top), "width": w, "height": h}))  # BGRA
-                bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                pil = Image.fromarray(rgb)
-            except Exception:
-                messagebox.showerror("Ошибка", "Не удалось снять скрин окна для выбора ROI банок.")
-                return
-            finally:
-                if was_iconified:
-                    try:
-                        self.root.deiconify()
-                        self.root.lift()
-                    except Exception:
-                        pass
-        else:
-            pil, w, h = cap
 
         def apply_roi(x: int, y: int, ww: int, hh: int) -> None:
             self.potion_roi_x.set(x)
@@ -2449,8 +2629,18 @@ class UI:
             self.potion_roi_w.set(ww)
             self.potion_roi_h.set(hh)
             self._on_save_settings()
+            self.log("ROI банок сохранён")
 
-        self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
+        # Prefer live overlay selection over the game window
+        try:
+            self._open_live_roi_overlay(hwnd, title="ROI банок", on_apply=apply_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI банок.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
 
     def _on_test_potion_ocr(self) -> None:
         if not self._ensure_window_selected():
@@ -2622,6 +2812,43 @@ class UI:
         new_state = self.bot.toggle_radar_detect()
         self.radar_detect_enabled_var.set(bool(new_state))
 
+    def _on_radar_detect_toggle_changed(self) -> None:
+        # Apply immediately (no "Save" required).
+        enabled = bool(self.radar_detect_enabled_var.get())
+        try:
+            self.bot.set_radar_detect_enabled(enabled)
+        except Exception:
+            try:
+                self.store.radar_detect_enabled = enabled
+                self.store.save()
+            except Exception:
+                pass
+
+    def _on_damage_tp_toggle_changed(self) -> None:
+        # Apply immediately (no "Save" required).
+        enabled = bool(self.damage_tp_enabled_var.get())
+        try:
+            self.store.damage_tp_enabled = enabled
+            self.store.save()
+        except Exception:
+            pass
+        try:
+            self.log(f"ТП по урону: {'ВКЛ' if enabled else 'ВЫКЛ'}")
+        except Exception:
+            pass
+
+    def _on_hp_tp_toggle_changed(self) -> None:
+        enabled = bool(self.hp_tp_enabled_var.get())
+        try:
+            self.store.hp_tp_enabled = enabled
+            self.store.save()
+        except Exception:
+            pass
+        try:
+            self.log(f"ТП по HP: {'ВКЛ' if enabled else 'ВЫКЛ'}")
+        except Exception:
+            pass
+
     def _open_roi_selector_for_callback(
         self, pil_img: Image.Image, window_w: int, window_h: int, on_apply
     ) -> None:
@@ -2664,6 +2891,11 @@ class UI:
                 return
             state["x1"], state["y1"] = evt.x, evt.y
             canvas.coords(state["rect"], state["x0"], state["y0"], evt.x, evt.y)
+            # Auto-apply on mouse release (same UX as live overlay)
+            try:
+                apply_any_roi()
+            except Exception:
+                pass
 
         canvas.bind("<ButtonPress-1>", on_down)
         canvas.bind("<B1-Motion>", on_move)
@@ -2689,10 +2921,359 @@ class UI:
             roi_w = int((x_max - x_min) * inv)
             roi_h = int((y_max - y_min) * inv)
             on_apply(max(0, roi_x), max(0, roi_y), max(1, roi_w), max(1, roi_h))
+            try:
+                self._toast("Область сохранена")
+            except Exception:
+                pass
             top.destroy()
 
-        ttk.Button(btn_row, text="Применить", command=apply_any_roi).pack(side="left")
-        ttk.Button(btn_row, text="Отмена", command=top.destroy).pack(side="left", padx=(8, 0))
+        # Auto-save on mouse release; keep only Cancel.
+        ttk.Button(btn_row, text="Отмена", command=top.destroy).pack(side="left")
+
+    def _open_live_roi_overlay(self, hwnd: int, *, title: str, on_apply) -> None:
+        """
+        ROI selection directly over the live game window (no screenshot).
+        Draw a rectangle on a transparent overlay aligned to the game's client area.
+        """
+        try:
+            bring_window_to_foreground(int(hwnd))
+        except Exception:
+            pass
+
+        try:
+            cl, ct, cr, cb = win32gui.GetClientRect(int(hwnd))
+            (left, top) = win32gui.ClientToScreen(int(hwnd), (int(cl), int(ct)))
+            (right, bottom) = win32gui.ClientToScreen(int(hwnd), (int(cr), int(cb)))
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось получить координаты окна: {e}")
+            return
+
+        w = max(1, int(right - left))
+        h = max(1, int(bottom - top))
+
+        overlay = tk.Toplevel(self.root)
+        overlay.title(title)
+        try:
+            overlay.overrideredirect(True)
+        except Exception:
+            pass
+        try:
+            overlay.attributes("-topmost", True)
+            # Make overlay readable.
+            overlay.attributes("-alpha", 0.55)
+        except Exception:
+            pass
+        overlay.geometry(f"{w}x{h}+{int(left)}+{int(top)}")
+
+        canvas = tk.Canvas(overlay, width=w, height=h, highlightthickness=0, bg="black")
+        canvas.pack(fill="both", expand=True)
+
+        # Centered instruction (more visible than top-left bar)
+        instr = canvas.create_text(
+            int(w / 2),
+            int(h / 2),
+            text=f"{title}\nВыдели прямоугольник мышью\n(отпустил — сохранено, Esc — отмена)",
+            fill="white",
+            font=("Segoe UI Semibold", 18),
+            justify="center",
+        )
+
+        state = {"x0": None, "y0": None, "x1": None, "y1": None, "rect": None}
+
+        def _notify_saved(msg: str = "Область сохранена") -> None:
+            try:
+                canvas.itemconfigure(instr, text=msg)
+            except Exception:
+                pass
+            try:
+                self.log(msg)
+            except Exception:
+                pass
+            try:
+                self._toast(msg)
+            except Exception:
+                pass
+            # no need to restore text; overlay closes on save
+
+        def apply_now(close: bool = True):
+            x0, y0, x1, y1 = state["x0"], state["y0"], state["x1"], state["y1"]
+            if x0 is None or y0 is None or x1 is None or y1 is None:
+                messagebox.showerror("Ошибка", "Сначала выдели область мышью.")
+                return
+            x_min, x_max = sorted([int(x0), int(x1)])
+            y_min, y_max = sorted([int(y0), int(y1)])
+            if (x_max - x_min) < 5 or (y_max - y_min) < 5:
+                messagebox.showerror("Ошибка", "Слишком маленькая область. Выдели побольше.")
+                return
+            try:
+                on_apply(max(0, x_min), max(0, y_min), max(1, x_max - x_min), max(1, y_max - y_min))
+                _notify_saved("Область сохранена")
+            finally:
+                if close:
+                    try:
+                        overlay.destroy()
+                    except Exception:
+                        pass
+
+        def cancel_now():
+            try:
+                overlay.destroy()
+            except Exception:
+                pass
+
+        # No buttons: save on release, Esc to cancel.
+
+        def on_down(evt):
+            state["x0"], state["y0"] = int(evt.x), int(evt.y)
+            state["x1"], state["y1"] = int(evt.x), int(evt.y)
+            if state["rect"] is not None:
+                try:
+                    canvas.delete(state["rect"])
+                except Exception:
+                    pass
+            state["rect"] = canvas.create_rectangle(evt.x, evt.y, evt.x, evt.y, outline="#00E5FF", width=3)
+
+        def on_move(evt):
+            if state["x0"] is None:
+                return
+            state["x1"], state["y1"] = int(evt.x), int(evt.y)
+            if state["rect"] is not None:
+                canvas.coords(state["rect"], int(state["x0"]), int(state["y0"]), int(evt.x), int(evt.y))
+
+        def on_up(_evt):
+            # Auto-apply on mouse release (expected UX)
+            try:
+                apply_now(True)
+            except Exception:
+                pass
+
+        canvas.bind("<ButtonPress-1>", on_down)
+        canvas.bind("<B1-Motion>", on_move)
+        canvas.bind("<ButtonRelease-1>", on_up)
+        overlay.bind("<Escape>", lambda _e: cancel_now())
+
+        try:
+            overlay.focus_force()
+        except Exception:
+            pass
+
+    def _mini_toast(self, msg: str, ms: int = 1200) -> None:
+        if not (self._mini_win and self._mini_win.winfo_exists()):
+            return
+        try:
+            self._mini_toast_var.set(str(msg))
+        except Exception:
+            return
+        # Also show centered, more visible banner in mini window.
+        try:
+            self._mini_center_toast(str(msg), ms=ms)
+        except Exception:
+            pass
+        try:
+            self._mini_win.after(ms, lambda: self._mini_toast_var.set(""))
+        except Exception:
+            pass
+
+    def _mini_center_toast(self, msg: str, ms: int = 1200) -> None:
+        if not (self._mini_win and self._mini_win.winfo_exists()):
+            return
+
+        # Lazy-create overlay label once.
+        lbl = getattr(self, "_mini_center_toast_lbl", None)
+        if not lbl:
+            try:
+                lbl = tb.Label(
+                    self._mini_win,  # type: ignore[arg-type]
+                    text="",
+                    bootstyle="inverse-success",
+                    font=("Segoe UI Semibold", 16),
+                    padding=12,
+                    justify="center",
+                )
+                lbl.place_forget()
+                self._mini_center_toast_lbl = lbl
+            except Exception:
+                self._mini_center_toast_lbl = None
+                return
+
+        try:
+            lbl.configure(text=str(msg))
+            lbl.lift()
+            # Slightly above center so it doesn't cover buttons too much.
+            lbl.place(relx=0.5, rely=0.42, anchor="center")
+        except Exception:
+            return
+
+        def _hide() -> None:
+            try:
+                if lbl.winfo_exists():
+                    lbl.place_forget()
+            except Exception:
+                pass
+
+        try:
+            self._mini_win.after(max(300, int(ms)), _hide)
+        except Exception:
+            _hide()
+
+    def _toast(self, msg: str, ms: int = 1200) -> None:
+        """
+        Visible notification (centered). Uses mini toast if mini is open,
+        otherwise shows a centered, non-transparent banner.
+        """
+        # Prefer mini toast if mini UI exists.
+        if self._mini_win and self._mini_win.winfo_exists():
+            try:
+                self._mini_toast(msg, ms=ms)
+                return
+            except Exception:
+                pass
+
+        text = str(msg or "").strip()
+        if not text:
+            return
+
+        top = tk.Toplevel(self.root)
+        try:
+            top.overrideredirect(True)
+        except Exception:
+            pass
+        try:
+            top.attributes("-topmost", True)
+            top.attributes("-alpha", 0.96)
+        except Exception:
+            pass
+
+        # Center on screen
+        try:
+            sw = int(top.winfo_screenwidth())
+            sh = int(top.winfo_screenheight())
+        except Exception:
+            sw, sh = 1200, 800
+        w, h = 520, 72
+        x = max(0, int((sw - w) / 2))
+        y = max(0, int((sh - h) / 2))
+        top.geometry(f"{w}x{h}+{x}+{y}")
+
+        frm = tb.Frame(top, padding=12, bootstyle="success")
+        frm.pack(fill="both", expand=True)
+        tb.Label(frm, text=text, font=("Segoe UI Semibold", 14), bootstyle="inverse-success").pack(expand=True)
+
+        try:
+            top.after(max(300, int(ms)), top.destroy)
+        except Exception:
+            pass
+
+    def _on_setup_text_detect_flow(self) -> None:
+        """
+        Mini-friendly flow:
+        1) pick Text ROI
+        2) automatically capture template after ROI is applied
+        """
+        # mark that next Text ROI apply should auto-capture template
+        try:
+            self._pending_auto_text_tpl_capture = True
+        except Exception:
+            pass
+        self._on_pick_text_roi()
+
+    def _on_pick_swords_roi_and_tpl(self) -> None:
+        try:
+            self._pending_auto_swords_tpl = True
+        except Exception:
+            pass
+        self._on_pick_damage_icon_roi()
+
+    def _on_pick_body_roi_and_tpl(self) -> None:
+        try:
+            self._pending_auto_body_tpl = True
+        except Exception:
+            pass
+        self._on_pick_damage_icon_normal_roi()
+
+    def _on_test_telegram_send(self) -> None:
+        if not self._ensure_window_selected():
+            return
+        try:
+            self._on_save_settings()
+        except Exception:
+            pass
+        hwnd = int(getattr(self.store, "window_hwnd", 0) or 0)
+        if hwnd == 0:
+            messagebox.showerror("Ошибка", "Сначала выбери и подтверди окно игры.")
+            return
+        try:
+            ok = bool(self.bot.send_telegram_test_radar(hwnd))
+        except Exception:
+            ok = False
+        if ok:
+            self.log("Telegram: тестовый скрин отправлен")
+            try:
+                self._toast("Telegram: скрин отправлен")
+            except Exception:
+                pass
+        else:
+            self.log("Telegram: тест не отправился (проверь token/chat_id и что выбран radar ROI)")
+            try:
+                self._toast("Telegram: не отправилось (проверь token/chat_id)")
+            except Exception:
+                pass
+
+    def _schedule_empty_text_capture(self, *, delay_ms: int = 650, show_preview: bool = True) -> None:
+        # Similar to _schedule_game_capture but uses bot.capture_empty_text (writes radar_empty_text.png)
+        mini_active = bool(getattr(self, "_mini_win", None) and self._mini_win.winfo_exists())
+        if mini_active:
+            try:
+                self._mini_win.withdraw()  # type: ignore[union-attr]
+            except Exception:
+                pass
+        else:
+            try:
+                self.root.iconify()
+            except Exception:
+                pass
+
+        def _do() -> None:
+            try:
+                if not self._ensure_window_selected():
+                    return
+                self._on_save_settings()
+                self.bot.window_title = self.store.window_title or self.window_title_var.get().strip()
+                hwnd = int(getattr(self.store, "window_hwnd", 0) or 0)
+                if hwnd:
+                    bring_window_to_foreground(hwnd)
+                time.sleep(max(0.05, float(delay_ms) / 1000.0))
+                path = self.bot.capture_empty_text()
+                self.log(f"Шаблон текста сохранён: {path}")
+                try:
+                    self._mini_action_var.set("Действие: Text ROI/шаблон сохранены")
+                except Exception:
+                    pass
+                if show_preview and (not mini_active):
+                    try:
+                        self._show_image_popup(Path(path), title="radar_empty_text.png (превью)")
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.log(f"Шаблон текста: ошибка {e!r}")
+            finally:
+                if mini_active:
+                    try:
+                        self._mini_win.deiconify()  # type: ignore[union-attr]
+                        self._mini_win.lift()  # type: ignore[union-attr]
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self.root.deiconify()
+                        self.root.lift()
+                    except Exception:
+                        pass
+
+        try:
+            self.root.after(50, _do)
+        except Exception:
+            _do()
 
     def _on_start_route(self) -> None:
         if not self._ensure_window_selected():
@@ -2739,7 +3320,6 @@ class UI:
             return
 
     def _on_pick_text_roi(self) -> None:
-        # Reuse the ROI selector but apply to text ROI vars
         if not self._ensure_window_selected():
             return
         hwnd = int(getattr(self.store, "window_hwnd", 0) or 0)
@@ -2747,37 +3327,33 @@ class UI:
             messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
             return
 
-        # Prefer window capture so the ROI selection is not polluted by other windows.
-        cap = self._capture_client_image_pil(hwnd)
-        if cap is not None:
-            pil, w, h = cap
-        else:
-            bring_window_to_foreground(hwnd)
-            time.sleep(0.18)
-            try:
-                cl, ct, cr, cb = win32gui.GetClientRect(hwnd)
-                (left, top) = win32gui.ClientToScreen(hwnd, (int(cl), int(ct)))
-                (right, bottom) = win32gui.ClientToScreen(hwnd, (int(cr), int(cb)))
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось получить координаты окна: {e}")
-                return
-
-            w = max(1, right - left)
-            h = max(1, bottom - top)
-            with mss() as sct:
-                img = np.array(sct.grab({"left": left, "top": top, "width": w, "height": h}))
-            bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            pil = Image.fromarray(rgb)
-
         def apply_text_roi(x: int, y: int, ww: int, hh: int) -> None:
             self.text_roi_x.set(x)
             self.text_roi_y.set(y)
             self.text_roi_w.set(ww)
             self.text_roi_h.set(hh)
             self._on_save_settings()
+            self.log("Text ROI сохранён")
+            # Optional auto-capture template if requested by mini flow
+            try:
+                if bool(getattr(self, "_pending_auto_text_tpl_capture", False)):
+                    self._pending_auto_text_tpl_capture = False
+                    self.log("Text ROI: сейчас сниму шаблон 'Нет Цель поиска' автоматически…")
+                    self._schedule_empty_text_capture(delay_ms=650, show_preview=False)
+            except Exception:
+                pass
 
-        self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_text_roi)
+        # Live overlay selection directly over the game window
+        try:
+            self._open_live_roi_overlay(hwnd, title="Text ROI", on_apply=apply_text_roi)
+        except Exception:
+            # Fallback to screenshot-based selector
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_text_roi)
 
     def _on_pick_menu_roi(self) -> None:
         if not self._ensure_window_selected():
@@ -2787,35 +3363,23 @@ class UI:
             messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
             return
 
-        cap = self._capture_client_image_pil(hwnd)
-        if cap is not None:
-            pil, w, h = cap
-        else:
-            bring_window_to_foreground(hwnd)
-            time.sleep(0.18)
-            try:
-                cl, ct, cr, cb = win32gui.GetClientRect(hwnd)
-                (left, top) = win32gui.ClientToScreen(hwnd, (int(cl), int(ct)))
-                (right, bottom) = win32gui.ClientToScreen(hwnd, (int(cr), int(cb)))
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось получить координаты окна: {e}")
-                return
-            w = max(1, right - left)
-            h = max(1, bottom - top)
-            with mss() as sct:
-                img = np.array(sct.grab({"left": left, "top": top, "width": w, "height": h}))
-            bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            pil = Image.fromarray(rgb)
-
         def apply_menu_roi(x: int, y: int, ww: int, hh: int) -> None:
             self.menu_roi_x.set(x)
             self.menu_roi_y.set(y)
             self.menu_roi_w.set(ww)
             self.menu_roi_h.set(hh)
             self._on_save_settings()
+            self.log("ROI меню/чата сохранён")
 
-        self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_menu_roi)
+        try:
+            self._open_live_roi_overlay(hwnd, title="ROI меню/чата", on_apply=apply_menu_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_menu_roi)
 
     def _on_capture_menu_tpl(self) -> None:
         if not self._ensure_window_selected():
@@ -2836,35 +3400,23 @@ class UI:
             messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
             return
 
-        cap = self._capture_client_image_pil(hwnd)
-        if cap is not None:
-            pil, w, h = cap
-        else:
-            bring_window_to_foreground(hwnd)
-            time.sleep(0.18)
-            try:
-                cl, ct, cr, cb = win32gui.GetClientRect(hwnd)
-                (left, top) = win32gui.ClientToScreen(hwnd, (int(cl), int(ct)))
-                (right, bottom) = win32gui.ClientToScreen(hwnd, (int(cr), int(cb)))
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось получить координаты окна: {e}")
-                return
-            w = max(1, right - left)
-            h = max(1, bottom - top)
-            with mss() as sct:
-                img = np.array(sct.grab({"left": left, "top": top, "width": w, "height": h}))
-            bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            pil = Image.fromarray(rgb)
-
         def apply_death_roi(x: int, y: int, ww: int, hh: int) -> None:
             self.death_roi_x.set(x)
             self.death_roi_y.set(y)
             self.death_roi_w.set(ww)
             self.death_roi_h.set(hh)
             self._on_save_settings()
+            self.log("ROI смерти сохранён")
 
-        self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_death_roi)
+        try:
+            self._open_live_roi_overlay(hwnd, title="ROI смерти", on_apply=apply_death_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_death_roi)
 
     def _on_capture_death_tpl(self) -> None:
         if not self._ensure_window_selected():
@@ -2884,22 +3436,6 @@ class UI:
         if hwnd == 0:
             messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
             return
-        cap = self._capture_client_image_pil(hwnd)
-        if cap is not None:
-            pil, w, h = cap
-        else:
-            bring_window_to_foreground(hwnd)
-            time.sleep(0.18)
-            cl, ct, cr, cb = win32gui.GetClientRect(hwnd)
-            (left, top) = win32gui.ClientToScreen(hwnd, (int(cl), int(ct)))
-            (right, bottom) = win32gui.ClientToScreen(hwnd, (int(cr), int(cb)))
-            w = max(1, right - left)
-            h = max(1, bottom - top)
-            with mss() as sct:
-                img = np.array(sct.grab({"left": left, "top": top, "width": w, "height": h}))
-            bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            pil = Image.fromarray(rgb)
 
         def apply_roi(x: int, y: int, ww: int, hh: int) -> None:
             self.damage_icon_roi_x.set(x)
@@ -2907,8 +3443,57 @@ class UI:
             self.damage_icon_roi_w.set(ww)
             self.damage_icon_roi_h.set(hh)
             self._on_save_settings()
+            self.log("ROI мечей сохранён")
+            try:
+                if bool(getattr(self, "_pending_auto_swords_tpl", False)):
+                    self._pending_auto_swords_tpl = False
+                    self.log("Мечи: сейчас сниму шаблон автоматически…")
+                    self._schedule_game_capture(kind="damage_attack_tpl", delay_ms=650, show_preview=False)
+            except Exception:
+                pass
 
-        self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
+        try:
+            self._open_live_roi_overlay(hwnd, title="ROI мечей", on_apply=apply_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
+
+    def _on_pick_damage_icon_normal_roi(self) -> None:
+        if not self._ensure_window_selected():
+            return
+        hwnd = int(getattr(self.store, "window_hwnd", 0) or 0)
+        if hwnd == 0:
+            messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
+            return
+
+        def apply_roi(x: int, y: int, ww: int, hh: int) -> None:
+            self.damage_icon_norm_roi_x.set(x)
+            self.damage_icon_norm_roi_y.set(y)
+            self.damage_icon_norm_roi_w.set(ww)
+            self.damage_icon_norm_roi_h.set(hh)
+            self._on_save_settings()
+            self.log("ROI корпуса сохранён")
+            try:
+                if bool(getattr(self, "_pending_auto_body_tpl", False)):
+                    self._pending_auto_body_tpl = False
+                    self.log("Корпус: сейчас сниму шаблон автоматически…")
+                    self._schedule_game_capture(kind="damage_normal_tpl", delay_ms=650, show_preview=False)
+            except Exception:
+                pass
+
+        try:
+            self._open_live_roi_overlay(hwnd, title="ROI корпуса", on_apply=apply_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
 
     def _on_pick_hp_roi(self) -> None:
         if not self._ensure_window_selected():
@@ -2917,22 +3502,6 @@ class UI:
         if hwnd == 0:
             messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
             return
-        cap = self._capture_client_image_pil(hwnd)
-        if cap is not None:
-            pil, w, h = cap
-        else:
-            bring_window_to_foreground(hwnd)
-            time.sleep(0.18)
-            cl, ct, cr, cb = win32gui.GetClientRect(hwnd)
-            (left, top) = win32gui.ClientToScreen(hwnd, (int(cl), int(ct)))
-            (right, bottom) = win32gui.ClientToScreen(hwnd, (int(cr), int(cb)))
-            w = max(1, right - left)
-            h = max(1, bottom - top)
-            with mss() as sct:
-                img = np.array(sct.grab({"left": left, "top": top, "width": w, "height": h}))
-            bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            pil = Image.fromarray(rgb)
 
         def apply_roi(x: int, y: int, ww: int, hh: int) -> None:
             self.hp_roi_x.set(x)
@@ -2940,38 +3509,48 @@ class UI:
             self.hp_roi_w.set(ww)
             self.hp_roi_h.set(hh)
             self._on_save_settings()
+            self.log("ROI HP сохранён")
 
-        self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
+        try:
+            self._open_live_roi_overlay(hwnd, title="ROI HP", on_apply=apply_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
 
     def _on_capture_damage_icon_tpl(self) -> None:
         if not self._ensure_window_selected():
             return
         self._on_save_settings()
         self.log("Шаблон атаки: через 0.6 сек сниму ROI из игры (переключись в игру и держи иконку мечей).")
-        self._schedule_game_capture(
-            kind="damage_attack_tpl",
-            delay_ms=600,
-        )
+        self._schedule_game_capture(kind="damage_attack_tpl", delay_ms=600, show_preview=False)
 
     def _on_capture_damage_icon_normal_tpl(self) -> None:
         if not self._ensure_window_selected():
             return
         self._on_save_settings()
         self.log("Шаблон обычной: через 0.6 сек сниму ROI из игры (переключись в игру, когда НЕ бьют).")
-        self._schedule_game_capture(
-            kind="damage_normal_tpl",
-            delay_ms=600,
-        )
+        self._schedule_game_capture(kind="damage_normal_tpl", delay_ms=600, show_preview=False)
 
-    def _schedule_game_capture(self, *, kind: str, delay_ms: int) -> None:
+    def _schedule_game_capture(self, *, kind: str, delay_ms: int, show_preview: bool = True) -> None:
         """
         When user clicks capture in UI, the game often isn't foreground yet.
         We briefly hide our UI, focus the game, wait a bit, then grab MSS screenshot.
         """
-        try:
-            self.root.iconify()
-        except Exception:
-            pass
+        mini_active = bool(getattr(self, "_mini_win", None) and self._mini_win.winfo_exists())
+        if mini_active:
+            try:
+                self._mini_win.withdraw()  # type: ignore[union-attr]
+            except Exception:
+                pass
+        else:
+            try:
+                self.root.iconify()
+            except Exception:
+                pass
 
         def _do() -> None:
             try:
@@ -2984,13 +3563,21 @@ class UI:
                 roi = self.store.damage_icon_roi
                 from vision import Vision
 
+                # Different templates can use different ROIs.
+                if kind == "damage_normal_tpl":
+                    roi = getattr(self.store, "damage_icon_normal_roi", self.store.damage_icon_roi)
                 img = Vision().grab_client_roi_bgr(hwnd, roi)
 
                 if kind == "damage_attack_tpl":
                     path = Path(str(getattr(self.store, "damage_icon_tpl_path", "damage_icon_tpl.png") or "damage_icon_tpl.png"))
                     cv2.imwrite(str(path), img)
                     self.log(f"Шаблон иконки атаки сохранён: {path}")
-                    self._show_image_popup(path, title="damage_icon_tpl.png (превью)")
+                    try:
+                        self._toast("Шаблон мечей сохранён")
+                    except Exception:
+                        pass
+                    if show_preview and (not mini_active):
+                        self._show_image_popup(path, title="damage_icon_tpl.png (превью)")
                 elif kind == "damage_normal_tpl":
                     path = Path(
                         str(
@@ -3000,7 +3587,12 @@ class UI:
                     )
                     cv2.imwrite(str(path), img)
                     self.log(f"Шаблон обычной иконки сохранён: {path}")
-                    self._show_image_popup(path, title="damage_icon_normal_tpl.png (превью)")
+                    try:
+                        self._toast("Шаблон корпуса сохранён")
+                    except Exception:
+                        pass
+                    if show_preview and (not mini_active):
+                        self._show_image_popup(path, title="damage_icon_normal_tpl.png (превью)")
                 else:
                     raise RuntimeError(f"Unknown capture kind: {kind!r}")
             except Exception as e:
@@ -3010,11 +3602,18 @@ class UI:
                     pass
                 self.log(f"Ошибка захвата шаблона: {e!r}")
             finally:
-                try:
-                    self.root.deiconify()
-                    self.root.lift()
-                except Exception:
-                    pass
+                if mini_active:
+                    try:
+                        self._mini_win.deiconify()  # type: ignore[union-attr]
+                        self._mini_win.lift()  # type: ignore[union-attr]
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self.root.deiconify()
+                        self.root.lift()
+                    except Exception:
+                        pass
 
         try:
             self.root.after(50, _do)
@@ -3150,7 +3749,404 @@ class UI:
                 self.stop_afk_btn.configure(state="disabled")
         except Exception:
             pass
+
+        # Mini overlay text
+        try:
+            self._update_mini_overlay()
+        except Exception:
+            pass
         self.root.after(300, self._tick_status)
+
+    def _toggle_mini(self) -> None:
+        if self._mini_win and self._mini_win.winfo_exists():
+            # Restore full window
+            try:
+                self._mini_win.destroy()
+            except Exception:
+                pass
+            self._mini_win = None
+            try:
+                self.root.deiconify()
+                self.root.lift()
+            except Exception:
+                pass
+            return
+
+        # Create mini overlay and hide main window
+        try:
+            self.root.withdraw()
+        except Exception:
+            pass
+
+        w = tk.Toplevel(self.root)
+        w.title("RAVEN BOT — мини")
+        try:
+            w.attributes("-topmost", True)
+            w.attributes("-alpha", 0.78)
+        except Exception:
+            pass
+        w.geometry("480x320+40+40")
+        w.resizable(True, True)
+        w.minsize(360, 220)
+
+        outer = tb.Frame(w, padding=8)
+        outer.pack(fill="both", expand=True)
+        outer.grid_columnconfigure(0, weight=1)
+        outer.grid_rowconfigure(1, weight=1)
+
+        # Fixed header (no scroll): status + hp + toast
+        head = tb.Frame(outer)
+        head.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        tb.Label(head, textvariable=self._mini_status_var, font=("Segoe UI Semibold", 11)).pack(anchor="w")
+        tb.Label(head, textvariable=self._mini_game_var, bootstyle="secondary").pack(anchor="w", pady=(4, 0))
+        tb.Label(head, textvariable=self._mini_action_var, bootstyle="info").pack(anchor="w", pady=(2, 0))
+        tb.Label(head, textvariable=self._mini_detect_var, bootstyle="warning").pack(anchor="w", pady=(2, 0))
+
+        mini_hp_row = tb.Frame(head)
+        mini_hp_row.pack(fill="x", pady=(6, 0))
+        mini_hp_bar = tb.Progressbar(
+            mini_hp_row,
+            maximum=100,
+            variable=self.hp_top_progress_var,
+            bootstyle="danger-striped",
+        )
+        mini_hp_bar.pack(side="left", fill="x", expand=True)
+        tb.Label(mini_hp_row, textvariable=self.hp_top_var, bootstyle="secondary").pack(side="left", padx=(10, 0))
+
+        toast = tb.Label(head, textvariable=self._mini_toast_var, bootstyle="success")
+        toast.pack(anchor="w", pady=(6, 0))
+
+        # Scrollable area for controls/settings
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vs = tb.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vs.set)
+        canvas.grid(row=1, column=0, sticky="nsew")
+        vs.grid(row=1, column=1, sticky="ns")
+
+        frm = tb.Frame(canvas)
+        win_id = canvas.create_window((0, 0), window=frm, anchor="nw")
+
+        def _sync_width(_evt=None) -> None:
+            try:
+                canvas.itemconfigure(win_id, width=canvas.winfo_width())
+            except Exception:
+                pass
+
+        def _sync_scroll(_evt=None) -> None:
+            try:
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            except Exception:
+                pass
+
+        canvas.bind("<Configure>", _sync_width)
+        frm.bind("<Configure>", _sync_scroll)
+
+        # Mouse wheel is handled globally via _set_mw_canvas routing.
+        canvas.bind("<Enter>", lambda _e: self._set_mw_canvas(canvas))
+        canvas.bind("<Leave>", lambda _e: self._set_mw_canvas(None))
+
+        # Collapsible sections
+        self._mini_sections: dict[str, dict] = {}
+
+        def add_section(title: str, *, open_by_default: bool = True) -> tb.Frame:
+            box = tb.Labelframe(frm, text=title, padding=8, bootstyle="secondary")
+            box.pack(fill="x", pady=(6, 0))
+            head = tb.Frame(box)
+            head.pack(fill="x")
+            state = {"open": bool(open_by_default)}
+            btn = tb.Button(head, text="Свернуть" if state["open"] else "Развернуть", bootstyle="secondary-outline")
+            btn.pack(side="right")
+            body = tb.Frame(box)
+            body.pack(fill="x", pady=(6, 0))
+
+            def toggle():
+                state["open"] = not state["open"]
+                if state["open"]:
+                    body.pack(fill="x", pady=(6, 0))
+                    btn.configure(text="Свернуть")
+                else:
+                    body.pack_forget()
+                    btn.configure(text="Развернуть")
+                _sync_scroll()
+
+            btn.configure(command=toggle)
+            self._mini_sections[title] = {"box": box, "body": body, "toggle": toggle, "state": state}
+            if not state["open"]:
+                body.pack_forget()
+                btn.configure(text="Развернуть")
+            return body
+
+        # Control section
+        sec_ctrl = add_section("Управление", open_by_default=True)
+        row_btn = tb.Frame(sec_ctrl)
+        row_btn.pack(fill="x")
+        self._mini_start_route_btn = tb.Button(row_btn, text="Старт (маршрут)", bootstyle="primary", command=self._on_start_route)
+        self._mini_start_route_btn.pack(side="left", expand=True, fill="x")
+        self._mini_start_afk_btn = tb.Button(row_btn, text="Старт AFK", bootstyle="primary-outline", command=self._on_start_afk)
+        self._mini_start_afk_btn.pack(side="left", expand=True, fill="x", padx=(8, 0))
+        self._mini_stop_btn = tb.Button(row_btn, text="Стоп", bootstyle="danger", command=self._on_stop, state="disabled")
+        self._mini_stop_btn.pack(side="left", padx=(8, 0))
+
+        row_tog = tb.Frame(sec_ctrl)
+        row_tog.pack(fill="x", pady=(8, 0))
+        tb.Checkbutton(
+            row_tog,
+            text="ТП по врагу",
+            variable=self.tp_on_enemy_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_tp_toggle_changed,
+        ).pack(side="left")
+        tb.Checkbutton(
+            row_tog,
+            text="Детект",
+            variable=self.radar_detect_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_radar_detect_toggle_changed,
+        ).pack(side="left", padx=(10, 0))
+
+        row_tog2 = tb.Frame(sec_ctrl)
+        row_tog2.pack(fill="x", pady=(6, 0))
+        tb.Checkbutton(
+            row_tog2,
+            text="ТП по урону",
+            variable=self.damage_tp_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_damage_tp_toggle_changed,
+        ).pack(side="left")
+        tb.Checkbutton(
+            row_tog2,
+            text="ТП по HP",
+            variable=self.hp_tp_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_hp_tp_toggle_changed,
+        ).pack(side="left", padx=(10, 0))
+        tb.Checkbutton(
+            row_tog2,
+            text="Фокус для ТП",
+            variable=self.tp_focus_steal_enabled_var,
+            bootstyle="round-toggle",
+            command=self._on_tp_focus_toggle_changed,
+        ).pack(side="left", padx=(10, 0))
+
+        row_tog3 = tb.Frame(sec_ctrl)
+        row_tog3.pack(fill="x", pady=(6, 0))
+        tb.Checkbutton(
+            row_tog3,
+            text="Перехват фокуса игры",
+            variable=self.focus_steal_enabled_var,
+            bootstyle="round-toggle",
+            command=lambda: self._on_save_settings(),
+        ).pack(side="left")
+        tb.Checkbutton(
+            row_tog3,
+            text="AFK (стоять)",
+            variable=self.farm_without_route_var,
+            bootstyle="round-toggle",
+            command=self._on_farm_without_route_toggle_changed,
+        ).pack(side="left", padx=(10, 0))
+
+        # Sound toggle + wav picker (mini)
+        row_sound = tb.Frame(sec_ctrl)
+        row_sound.pack(fill="x", pady=(6, 0))
+        tb.Checkbutton(
+            row_sound,
+            text="Звук",
+            variable=self.enemy_alert_enabled_var,
+            bootstyle="round-toggle",
+            command=lambda: self._on_save_settings(),
+        ).pack(side="left")
+        tb.Button(row_sound, text="WAV…", bootstyle="outline", command=self._on_pick_enemy_alert_wav).pack(
+            side="left", padx=(10, 0)
+        )
+
+        # Telegram quick settings (mini)
+        sec_tg = add_section("Telegram", open_by_default=False)
+        tg1 = tb.Frame(sec_tg)
+        tg1.pack(fill="x")
+        tb.Checkbutton(
+            tg1,
+            text="Скрин при атаке",
+            variable=self.telegram_enabled_var,
+            bootstyle="round-toggle",
+            command=lambda: self._on_save_settings(),
+        ).pack(side="left")
+        tb.Label(tg1, text="Интервал", bootstyle="secondary").pack(side="left", padx=(10, 0))
+        tb.Spinbox(tg1, from_=5.0, to=3600.0, increment=1.0, textvariable=self.telegram_interval_var, width=8).pack(
+            side="left", padx=(8, 0)
+        )
+        tb.Button(tg1, text="Тест", bootstyle="outline", command=self._on_test_telegram_send).pack(side="right")
+
+        tg2 = tb.Frame(sec_tg)
+        tg2.pack(fill="x", pady=(6, 0))
+        tb.Label(tg2, text="Chat ID", bootstyle="secondary").pack(side="left")
+        self._mini_tg_chat_entry = tb.Entry(tg2, textvariable=self.telegram_chat_id_var, width=18)
+        self._mini_tg_chat_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        self._install_paste_support(self._mini_tg_chat_entry)
+
+        tg3 = tb.Frame(sec_tg)
+        tg3.pack(fill="x", pady=(6, 0))
+        tb.Label(tg3, text="Token", bootstyle="secondary").pack(side="left")
+        self._mini_tg_token_entry = tb.Entry(tg3, textvariable=self.telegram_token_var, width=22, show="•")
+        self._mini_tg_token_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        self._install_paste_support(self._mini_tg_token_entry)
+
+        # Teleport quick settings
+        sec_tp = add_section("Телепорт", open_by_default=False)
+        tp_row1 = tb.Frame(sec_tp)
+        tp_row1.pack(fill="x")
+        tb.Label(tp_row1, text="Клавиша", bootstyle="secondary").pack(side="left")
+        tb.Combobox(tp_row1, textvariable=self.tp_key_var, state="normal", width=10).pack(side="left", padx=(10, 0))
+        tb.Label(tp_row1, text="Удержание", bootstyle="secondary").pack(side="left", padx=(10, 0))
+        tb.Spinbox(tp_row1, from_=0.01, to=0.30, increment=0.01, textvariable=self.key_hold_var, width=6).pack(
+            side="left", padx=(8, 0)
+        )
+
+        tp_row2 = tb.Frame(sec_tp)
+        tp_row2.pack(fill="x", pady=(6, 0))
+        tb.Label(tp_row2, text="Ожидание от/до (сек)", bootstyle="secondary").pack(side="left")
+        tb.Spinbox(tp_row2, from_=0, to=3600, textvariable=self.wait_from_var, width=6).pack(side="left", padx=(10, 4))
+        tb.Spinbox(tp_row2, from_=0, to=3600, textvariable=self.wait_to_var, width=6).pack(side="left", padx=(4, 0))
+        tb.Button(tp_row2, text="Применить", bootstyle="outline", command=self._on_save_settings).pack(side="right")
+
+        # Detect quick actions (ROI selection + templates)
+        sec_detect = add_section("Детект", open_by_default=False)
+        d1 = tb.Frame(sec_detect)
+        d1.pack(fill="x")
+        tb.Button(d1, text="Радар: область + шаблон", bootstyle="outline", command=self._on_setup_text_detect_flow).pack(
+            side="left", expand=True, fill="x"
+        )
+        # "Переснять шаблон" не показываем в мини-режиме: основная кнопка делает область+шаблон.
+
+        d2 = tb.Frame(sec_detect)
+        d2.pack(fill="x", pady=(6, 0))
+        tb.Button(d2, text="Мечи: ROI+шаблон", bootstyle="outline", command=self._on_pick_swords_roi_and_tpl).pack(
+            side="left", expand=True, fill="x"
+        )
+        # tpl auto after ROI
+
+        d2b = tb.Frame(sec_detect)
+        d2b.pack(fill="x", pady=(6, 0))
+        tb.Button(d2b, text="Корпус: ROI+шаблон", bootstyle="outline", command=self._on_pick_body_roi_and_tpl).pack(
+            side="left", expand=True, fill="x"
+        )
+        # log button removed in mini UI (too technical)
+
+        d3 = tb.Frame(sec_detect)
+        d3.pack(fill="x", pady=(6, 0))
+        tb.Button(d3, text="ROI HP", bootstyle="outline", command=self._on_pick_hp_roi).pack(side="left", expand=True, fill="x")
+        # log button removed in mini UI (too technical)
+
+        # Routes / profiles quick settings
+        sec_routes = add_section("Маршруты", open_by_default=False)
+        rr1 = tb.Frame(sec_routes)
+        rr1.pack(fill="x")
+        tb.Label(rr1, text="Профиль", bootstyle="secondary").pack(side="left")
+        tb.Combobox(rr1, textvariable=self.profile_var, state="readonly", width=14, values=self.profile_combo["values"]).pack(
+            side="left", padx=(10, 0)
+        )
+        tb.Button(rr1, text="OK", bootstyle="outline", command=lambda: self._on_select_profile()).pack(side="left", padx=(10, 0))
+
+        rr2 = tb.Frame(sec_routes)
+        rr2.pack(fill="x", pady=(6, 0))
+        tb.Label(rr2, text="Setup", bootstyle="secondary").pack(side="left")
+        tb.Combobox(rr2, textvariable=self.setup_route_var, state="readonly", width=18, values=self.setup_routes_combo["values"]).pack(
+            side="left", padx=(10, 0)
+        )
+        tb.Button(rr2, text="OK", bootstyle="outline", command=lambda: self._on_select_setup_route()).pack(side="left", padx=(10, 0))
+
+        rr3 = tb.Frame(sec_routes)
+        rr3.pack(fill="x", pady=(6, 0))
+        tb.Label(rr3, text="Farm", bootstyle="secondary").pack(side="left")
+        tb.Combobox(rr3, textvariable=self.active_route_var, state="readonly", width=18, values=self.routes_combo["values"]).pack(
+            side="left", padx=(10, 0)
+        )
+        tb.Button(rr3, text="OK", bootstyle="outline", command=lambda: self._on_select_active_route()).pack(side="left", padx=(10, 0))
+
+        # Hotkey section
+        sec_hk = add_section("Хоткей", open_by_default=False)
+        hk_row = tb.Frame(sec_hk)
+        hk_row.pack(fill="x")
+        tb.Label(hk_row, text="Пауза/Продолжить", bootstyle="secondary").pack(side="left")
+        hotkeys = [f"f{i}" for i in range(6, 13)] + ["pause", "scrolllock", "insert", "home", "end", "pageup", "pagedown", "delete"]
+        tb.Combobox(hk_row, textvariable=self.pause_hotkey_var, state="readonly", values=hotkeys, width=10).pack(
+            side="left", padx=(10, 0)
+        )
+        tb.Button(hk_row, text="Применить", bootstyle="outline", command=self._on_apply_pause_hotkey).pack(side="left", padx=(10, 0))
+
+        # Footer
+        btns = tb.Frame(frm)
+        btns.pack(fill="x", pady=(10, 0))
+        tb.Button(btns, text="Развернуть", bootstyle="primary", command=self._toggle_mini).pack(side="left")
+
+        def _on_close():
+            # same as expand
+            self._toggle_mini()
+
+        try:
+            w.protocol("WM_DELETE_WINDOW", _on_close)
+        except Exception:
+            pass
+
+        self._mini_win = w
+        self._update_mini_overlay()
+
+    def _update_mini_overlay(self) -> None:
+        if not (self._mini_win and self._mini_win.winfo_exists()):
+            return
+        running = self.bot.is_running()
+        paused = bool(getattr(self.bot, "is_paused", lambda: False)())
+        self._mini_status_var.set("Бот: пауза" if (running and paused) else ("Бот: запущен" if running else "Бот: остановлен"))
+
+        # Start/Stop buttons UX: highlight active mode and disable Stop when not running.
+        try:
+            if hasattr(self, "_mini_stop_btn") and self._mini_stop_btn:
+                self._mini_stop_btn.configure(state=("normal" if running else "disabled"))
+        except Exception:
+            pass
+        try:
+            # Determine current mode from settings (bot uses this flag).
+            is_afk_mode = bool(getattr(self.store, "farm_without_route", False))
+            if hasattr(self, "_mini_start_route_btn") and self._mini_start_route_btn:
+                self._mini_start_route_btn.configure(
+                    bootstyle=("success" if (running and (not is_afk_mode)) else "primary"),
+                )
+            if hasattr(self, "_mini_start_afk_btn") and self._mini_start_afk_btn:
+                self._mini_start_afk_btn.configure(
+                    bootstyle=("success" if (running and is_afk_mode) else "primary-outline"),
+                )
+        except Exception:
+            pass
+
+        hwnd = int(getattr(self.store, "window_hwnd", 0) or 0)
+        ok = False
+        fg = False
+        if hwnd:
+            try:
+                ok = bool(win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd) and (not win32gui.IsIconic(hwnd)))
+            except Exception:
+                ok = False
+            try:
+                fg = (int(win32gui.GetForegroundWindow() or 0) == int(hwnd))
+            except Exception:
+                fg = False
+        self._mini_game_var.set(f"Окно игры: {'OK' if ok else 'НЕ ВИЖУ'}; фокус={'ДА' if fg else 'НЕТ'}")
+
+        action = str(getattr(self.bot, "current_action", "") or "")
+        if not action:
+            action = "—"
+        self._mini_action_var.set(f"Действие: {action}")
+
+        # Live detect snapshot (best-effort)
+        try:
+            enemy = bool(getattr(self.bot, "last_radar_enemy", False))
+            attacked = bool(getattr(self.bot, "last_attacked", False))
+            hp = getattr(self.bot, "last_hp_pct", None)
+            hp_s = "?" if hp is None else f"{int(hp)}%"
+            parts = [f"Враг: {'ДА' if enemy else 'НЕТ'}", f"Атакуют: {'ДА' if attacked else 'НЕТ'}", f"HP: {hp_s}"]
+            # Hide technical matching metrics in mini UI (keep it human-readable).
+            self._mini_detect_var.set("Детект: " + " | ".join(parts))
+        except Exception:
+            self._mini_detect_var.set("Детект: ?")
 
     def _tick_hp_preview(self) -> None:
         # Update HP% progressbar when a window is selected and ROI looks valid.
@@ -3415,7 +4411,6 @@ class UI:
                 "**Клавиша телепорта** — какую кнопку нажимать для ТП.\n"
                 "**ТП по врагу** — разрешить/запретить телепорт при детекте.\n"
                 "**Детект радара** — включить/выключить сам детект.\n"
-                "**Вкл/Выкл** — быстро переключает детект.\n"
                 "**Фокус для ТП** — можно принудительно фокусировать игру только на момент телепорта.\n\n"
                 "**После ТП** — что сделать после телепорта:\n"
                 "- `none` — ничего\n"
@@ -3431,8 +4426,8 @@ class UI:
                 "Тут настраивается детект по тексту **«Нет Цель поиска»**.\n\n"
                 "**ВАЖНО: сначала ВЫДЕЛИ РАДАР/ОБЛАСТЬ** — выбери ROI так, чтобы в рамке был только блок радара с текстом.\n\n"
                 "**Text ROI (x, y, w, h)** — область внутри окна игры, где появляется этот текст.\n"
-                "**Выбрать Text ROI мышью** — откроет скрин окна игры, выдели прямоугольник и нажми “Применить”.\n"
-                "**Сделать скриншот 'Нет Цель поиска'** — сохранит шаблон `radar_empty_text.png` (эталон “пусто”).\n"
+                "**Радар: область (ROI)** — выдели область текста “Нет Цель поиска” (сохранится сразу).\n"
+                "**Радар: шаблон 'Нет Цель поиска'** — сохранит `radar_empty_text.png` (эталон “пусто”).\n"
                 "**Порог совпадения** — насколько текст должен совпадать с шаблоном.\n\n"
                 "Ниже есть блок **«Меню/чат открыт (авто-ESC)»**:\n"
                 "- Выдели ROI на индикаторе, сделай шаблон.\n"

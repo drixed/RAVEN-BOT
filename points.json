@@ -1,6 +1,6 @@
 {
   "window_title": "Raven2",
-  "window_hwnd": 6360636,
+  "window_hwnd": 1311274,
   "points": [
     {
       "name": "tmp",
@@ -185,16 +185,16 @@
   "empty_radar_path": "radar_empty.png",
   "empty_text_path": "radar_empty_text.png",
   "empty_text_roi": {
-    "x": 1536,
-    "y": 115,
-    "w": 352,
-    "h": 195
+    "x": 1997,
+    "y": 112,
+    "w": 467,
+    "h": 254
   },
   "empty_text_threshold": 0.86,
   "diff_min_changed_pixels": 400,
   "diff_threshold": 22,
   "teleport_key": "f4",
-  "key_hold_s": 0.06,
+  "key_hold_s": 0.03,
   "tp_on_enemy_enabled": false,
   "radar_detect_enabled": false,
   "post_tp_action": "press_r",
@@ -210,6 +210,8 @@
   "min_tp_cooldown_s": 10.0,
   "empty_match_threshold": 0.88,
   "teleport_wait_s": 60,
+  "teleport_wait_min_s": 60,
+  "teleport_wait_max_s": 60,
   "check_interval_s": 0.25,
   "loop_jitter_s": 0.05,
   "move_time_min_s": 0.02,
@@ -219,10 +221,10 @@
   "auto_buy_potions_enabled": false,
   "auto_buy_potions_threshold": 300,
   "auto_buy_potions_roi": {
-    "x": 922,
-    "y": 1340,
-    "w": 77,
-    "h": 36
+    "x": 924,
+    "y": 1328,
+    "w": 67,
+    "h": 57
   },
   "auto_buy_potions_route_name": null,
   "auto_buy_city_wait_s": 8.0,
@@ -236,15 +238,20 @@
   "enemy_alert_sound_path": "",
   "log_to_file_enabled": false,
   "log_dir": "logs",
+  "telegram_enabled": true,
+  "telegram_bot_token": "8661106252:AAHHt800ZQx8SYXD34pXIqpQwKXlC4d1l8A",
+  "telegram_chat_id": "395794712",
+  "telegram_send_on_attacked": true,
+  "telegram_interval_s": 30.0,
   "pause_hotkey": "end",
   "menu_autoclose_enabled": false,
   "menu_autoclose_key": "esc",
-  "menu_autoclose_attempts": 2,
+  "menu_autoclose_attempts": 1,
   "menu_autoclose_roi": {
     "x": 0,
     "y": 0,
     "w": 200,
-    "h": 200
+    "h": 199
   },
   "menu_autoclose_tpl_path": "menu_open_tpl.png",
   "menu_autoclose_threshold": 0.86,
@@ -253,12 +260,12 @@
   "death_roi": {
     "x": 89,
     "y": 9,
-    "w": 308,
-    "h": 36
+    "w": 307,
+    "h": 35
   },
   "death_tpl_path": "death_tpl.png",
   "death_threshold": 0.86,
-  "death_route_name": null,
+  "death_route_name": "tmp",
   "death_cooldown_s": 19.0,
   "schedule_enabled": false,
   "schedule_start_hhmm": "02:00",
@@ -268,10 +275,16 @@
   "schedule_last_start_date": "",
   "damage_tp_enabled": true,
   "damage_icon_roi": {
-    "x": 393,
-    "y": 0,
-    "w": 57,
-    "h": 77
+    "x": 387,
+    "y": 2,
+    "w": 51,
+    "h": 58
+  },
+  "damage_icon_normal_roi": {
+    "x": 394,
+    "y": 4,
+    "w": 60,
+    "h": 69
   },
   "damage_icon_tpl_path": "damage_icon_tpl.png",
   "damage_icon_threshold": 0.86,
@@ -279,10 +292,10 @@
   "damage_icon_normal_threshold": 0.86,
   "damage_icon_margin": 0.04,
   "hp_bar_roi": {
-    "x": 84,
-    "y": 14,
-    "w": 309,
-    "h": 28
+    "x": 89,
+    "y": 16,
+    "w": 305,
+    "h": 23
   },
   "hp_tp_enabled": false,
   "hp_tp_threshold_pct": 70,

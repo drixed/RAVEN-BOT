@@ -15,6 +15,10 @@ import win32con
 import numpy as np
 import winsound
 import os
+try:
+    import requests  # type: ignore
+except Exception:
+    requests = None  # type: ignore
 
 from input_controller import InputController
 from vision import EnemyColorHSV, RadarROI, Vision
@@ -168,7 +172,9 @@ class PointsStore:
         self.detect_confirm_streak: int = 3  # require N consecutive detections before TP
         self.min_tp_cooldown_s: float = 10.0  # minimum seconds between teleports
         self.empty_match_threshold: float = 0.88  # if score >= threshold => empty => no enemy
-        self.teleport_wait_s: int = 60
+        # Teleport wait range (seconds). UI uses min/max and picks random in [min..max] each TP.
+        self.teleport_wait_min_s: int = 60
+        self.teleport_wait_max_s: int = 60
         self.check_interval_s: float = 0.25
         self.loop_jitter_s: float = 0.05
         self.move_time_min_s: float = 0.02
@@ -203,6 +209,13 @@ class PointsStore:
         self.log_to_file_enabled: bool = False
         self.log_dir: str = "logs"
 
+        # --- Telegram alerts (screenshot on attacked) ---
+        self.telegram_enabled: bool = False
+        self.telegram_bot_token: str = ""
+        self.telegram_chat_id: str = ""
+        self.telegram_send_on_attacked: bool = True
+        self.telegram_interval_s: float = 30.0
+
         # --- Hotkeys ---
         # Key name from preset list, e.g. "f8", "pause", "scrolllock"
         self.pause_hotkey: str = "f8"
@@ -235,10 +248,13 @@ class PointsStore:
         # --- Damage/HP teleport mode ---
         # When enabled: ignore "ТП по врагу" and use attacked-icon + HP threshold trigger.
         self.damage_tp_enabled: bool = False
+        # ROI for attacked (swords) icon
         self.damage_icon_roi = RadarROI(x=0, y=0, w=1, h=1)
         self.damage_icon_tpl_path: str = "damage_icon_tpl.png"
         self.damage_icon_threshold: float = 0.86
         # Optional dual-template mode: normal icon vs attacked(swords) icon
+        # ROI for normal (body) icon (can differ from swords ROI)
+        self.damage_icon_normal_roi = RadarROI(x=0, y=0, w=1, h=1)
         self.damage_icon_normal_tpl_path: str = "damage_icon_normal_tpl.png"
         self.damage_icon_normal_threshold: float = 0.86
         self.damage_icon_margin: float = 0.04  # how much better attacked score must be than normal
@@ -312,7 +328,14 @@ class PointsStore:
         self.detect_confirm_streak = int(data.get("detect_confirm_streak", 3))
         self.min_tp_cooldown_s = float(data.get("min_tp_cooldown_s", 10.0))
         self.empty_match_threshold = float(data.get("empty_match_threshold", 0.88))
-        self.teleport_wait_s = int(data.get("teleport_wait_s", 60))
+        # Backward compat: old single teleport_wait_s
+        if "teleport_wait_min_s" in data or "teleport_wait_max_s" in data:
+            self.teleport_wait_min_s = int(data.get("teleport_wait_min_s", data.get("teleport_wait_s", 60)))
+            self.teleport_wait_max_s = int(data.get("teleport_wait_max_s", data.get("teleport_wait_s", 60)))
+        else:
+            v = int(data.get("teleport_wait_s", 60))
+            self.teleport_wait_min_s = v
+            self.teleport_wait_max_s = v
         self.check_interval_s = float(data.get("check_interval_s", 0.25))
         self.loop_jitter_s = float(data.get("loop_jitter_s", 0.05))
         self.move_time_min_s = float(data.get("move_time_min_s", 0.02))
@@ -334,6 +357,12 @@ class PointsStore:
         self.enemy_alert_sound_path = str(data.get("enemy_alert_sound_path", "") or "")
         self.log_to_file_enabled = bool(data.get("log_to_file_enabled", False))
         self.log_dir = str(data.get("log_dir", "logs") or "logs")
+        # Telegram
+        self.telegram_enabled = bool(data.get("telegram_enabled", False))
+        self.telegram_bot_token = str(data.get("telegram_bot_token", "") or "").strip()
+        self.telegram_chat_id = str(data.get("telegram_chat_id", "") or "").strip()
+        self.telegram_send_on_attacked = bool(data.get("telegram_send_on_attacked", True))
+        self.telegram_interval_s = float(data.get("telegram_interval_s", 30.0))
         self.pause_hotkey = str(data.get("pause_hotkey", "f8") or "f8").strip().lower()
         self.menu_autoclose_enabled = bool(data.get("menu_autoclose_enabled", False))
         self.menu_autoclose_key = str(data.get("menu_autoclose_key", "esc") or "esc").strip().lower()
@@ -356,6 +385,11 @@ class PointsStore:
         self.schedule_last_start_date = str(data.get("schedule_last_start_date", "") or "").strip()
         self.damage_tp_enabled = bool(data.get("damage_tp_enabled", False))
         self.damage_icon_roi = RadarROI.from_dict(data.get("damage_icon_roi", {}))
+        # Backward compat: if normal ROI not present, use same as swords ROI
+        if "damage_icon_normal_roi" in data:
+            self.damage_icon_normal_roi = RadarROI.from_dict(data.get("damage_icon_normal_roi", {}))
+        else:
+            self.damage_icon_normal_roi = RadarROI.from_dict(data.get("damage_icon_roi", {}))
         self.damage_icon_tpl_path = str(data.get("damage_icon_tpl_path", "damage_icon_tpl.png") or "damage_icon_tpl.png")
         self.damage_icon_threshold = float(data.get("damage_icon_threshold", 0.86))
         self.damage_icon_normal_tpl_path = str(
@@ -406,7 +440,10 @@ class PointsStore:
             "detect_confirm_streak": int(self.detect_confirm_streak),
             "min_tp_cooldown_s": float(self.min_tp_cooldown_s),
             "empty_match_threshold": float(self.empty_match_threshold),
-            "teleport_wait_s": int(self.teleport_wait_s),
+            # Keep legacy key for old builds, but also store explicit range.
+            "teleport_wait_s": int(self.teleport_wait_min_s),
+            "teleport_wait_min_s": int(self.teleport_wait_min_s),
+            "teleport_wait_max_s": int(self.teleport_wait_max_s),
             "check_interval_s": float(self.check_interval_s),
             "loop_jitter_s": float(self.loop_jitter_s),
             "move_time_min_s": float(self.move_time_min_s),
@@ -428,6 +465,12 @@ class PointsStore:
             "enemy_alert_sound_path": str(self.enemy_alert_sound_path),
             "log_to_file_enabled": bool(self.log_to_file_enabled),
             "log_dir": str(self.log_dir),
+            # Telegram
+            "telegram_enabled": bool(self.telegram_enabled),
+            "telegram_bot_token": str(self.telegram_bot_token),
+            "telegram_chat_id": str(self.telegram_chat_id),
+            "telegram_send_on_attacked": bool(self.telegram_send_on_attacked),
+            "telegram_interval_s": float(self.telegram_interval_s),
             "pause_hotkey": str(self.pause_hotkey),
             "menu_autoclose_enabled": bool(self.menu_autoclose_enabled),
             "menu_autoclose_key": str(self.menu_autoclose_key),
@@ -450,6 +493,7 @@ class PointsStore:
             "schedule_last_start_date": str(self.schedule_last_start_date),
             "damage_tp_enabled": bool(self.damage_tp_enabled),
             "damage_icon_roi": self.damage_icon_roi.as_dict(),
+            "damage_icon_normal_roi": self.damage_icon_normal_roi.as_dict(),
             "damage_icon_tpl_path": str(self.damage_icon_tpl_path),
             "damage_icon_threshold": float(self.damage_icon_threshold),
             "damage_icon_normal_tpl_path": str(self.damage_icon_normal_tpl_path),
@@ -590,9 +634,30 @@ LogFn = Callable[[str], None]
 
 
 class Bot:
+    def _tp_wait_s(self) -> int:
+        mn = int(getattr(self.store, "teleport_wait_min_s", getattr(self.store, "teleport_wait_s", 60)) or 60)
+        mx = int(getattr(self.store, "teleport_wait_max_s", getattr(self.store, "teleport_wait_s", 60)) or 60)
+        mn = max(0, mn)
+        mx = max(0, mx)
+        if mx < mn:
+            mn, mx = mx, mn
+        if mx == mn:
+            return int(mn)
+        return int(random.randint(int(mn), int(mx)))
     def __init__(self, store: PointsStore, log: LogFn):
         self.store = store
         self.log = log
+
+        # Human-friendly runtime status (UI mini window reads this).
+        self.current_action: str = "Ожидание"
+
+        # Mini UI live "detect" indicators (best-effort).
+        self.last_radar_enemy: bool = False
+        self.last_radar_score_label: str = ""
+        self.last_text_match_score: float | None = None
+        self.last_text_cap_mode: str = ""
+        self.last_attacked: bool = False
+        self.last_hp_pct: int | None = None
 
         self._stop = threading.Event()
         self._pause = threading.Event()
@@ -623,9 +688,101 @@ class Bot:
         self._last_death_ts: float = 0.0
         self._last_damage_tp_ts: float = 0.0
         self._last_attacked_alert_ts: float = 0.0
+        self._last_tg_attacked_ts: float = 0.0
         self._last_damage_debug_ts: float = 0.0
         self._last_damage_missing_tpl_ts: float = 0.0
         self._last_damage_err_ts: float = 0.0
+
+    def _send_telegram_photo(self, *, caption: str, png_bytes: bytes) -> bool:
+        if not bool(getattr(self.store, "telegram_enabled", False)):
+            return False
+        token = str(getattr(self.store, "telegram_bot_token", "") or "").strip()
+        chat_id = str(getattr(self.store, "telegram_chat_id", "") or "").strip()
+        if not token or not chat_id:
+            return False
+
+        url = f"https://api.telegram.org/bot{token}/sendPhoto"
+        cap = str(caption or "").strip()[:900]
+        try:
+            # Prefer requests if available (simpler multipart).
+            if requests is not None:
+                files = {"photo": ("radar.png", png_bytes, "image/png")}
+                data = {"chat_id": chat_id, "caption": cap}
+                r = requests.post(url, data=data, files=files, timeout=10)
+                return bool(getattr(r, "ok", False))
+
+            # Fallback without external deps: build multipart manually.
+            import uuid
+            import urllib.request
+
+            boundary = "----RAVENBOT" + uuid.uuid4().hex
+            parts: list[bytes] = []
+
+            def add_field(name: str, value: str) -> None:
+                parts.append(f"--{boundary}\r\n".encode("utf-8"))
+                parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+                parts.append((value or "").encode("utf-8"))
+                parts.append(b"\r\n")
+
+            def add_file(name: str, filename: str, content_type: str, content: bytes) -> None:
+                parts.append(f"--{boundary}\r\n".encode("utf-8"))
+                parts.append(
+                    f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode("utf-8")
+                )
+                parts.append(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+                parts.append(content)
+                parts.append(b"\r\n")
+
+            add_field("chat_id", chat_id)
+            if cap:
+                add_field("caption", cap)
+            add_file("photo", "radar.png", "image/png", png_bytes)
+            parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+
+            body = b"".join(parts)
+            req = urllib.request.Request(url, data=body, method="POST")
+            req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+            req.add_header("Content-Length", str(len(body)))
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return int(getattr(resp, "status", 0) or 0) == 200
+        except Exception:
+            return False
+
+    def send_telegram_test_radar(self, hwnd: int) -> bool:
+        """
+        Capture current radar ROI and send to Telegram (manual test button).
+        """
+        try:
+            rect = get_window_rect(hwnd)
+        except Exception:
+            return False
+        # Prefer Text ROI ("Нет Цель поиска") because it's the most meaningful for the user.
+        roi = getattr(self.store, "empty_text_roi", None)
+        if roi is None or int(getattr(roi, "w", 1)) <= 5 or int(getattr(roi, "h", 1)) <= 5:
+            roi = getattr(self.store, "radar_roi", None)
+        try:
+            radar = self._vision.grab_radar_bgr(rect, roi)
+        except Exception:
+            try:
+                radar = self._vision.grab_client_roi_bgr(hwnd, roi)
+            except Exception:
+                radar = None
+        if radar is None:
+            return False
+        try:
+            ok, buf = cv2.imencode(".png", radar)
+            if not ok:
+                return False
+            caption = "RAVEN BOT: ТЕСТ — скрин Text ROI"
+            return bool(self._send_telegram_photo(caption=caption, png_bytes=bytes(buf)))
+        except Exception:
+            return False
+
+    def _set_action(self, text: str) -> None:
+        try:
+            self.current_action = str(text or "").strip() or "Ожидание"
+        except Exception:
+            self.current_action = "Ожидание"
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -957,6 +1114,17 @@ class Bot:
         self.log(f"Шаблон иконки атаки сохранён: {path} (roi={roi.x},{roi.y},{roi.w},{roi.h})")
         return path
 
+    def capture_damage_icon_normal_template(self) -> Path:
+        hwnd = self._get_game_hwnd()
+        roi = getattr(self.store, "damage_icon_normal_roi", getattr(self.store, "damage_icon_roi", RadarROI(x=0, y=0, w=1, h=1)))
+        img = self._vision.grab_client_roi_bgr(hwnd, roi)
+        path = Path(
+            str(getattr(self.store, "damage_icon_normal_tpl_path", "damage_icon_normal_tpl.png") or "damage_icon_normal_tpl.png")
+        )
+        cv2.imwrite(str(path), img)
+        self.log(f"Шаблон корпуса сохранён: {path} (roi={roi.x},{roi.y},{roi.w},{roi.h})")
+        return path
+
     def _damage_icon_score(self, hwnd: int) -> float | None:
         # Kept for backward-compat; prefer _damage_icon_scores()
         scores = self._damage_icon_scores(hwnd)
@@ -969,14 +1137,27 @@ class Bot:
         """
         if not bool(getattr(self.store, "damage_tp_enabled", False)):
             return None
-        roi = getattr(self.store, "damage_icon_roi", RadarROI(x=0, y=0, w=1, h=1))
-        if int(getattr(roi, "w", 1)) <= 5 or int(getattr(roi, "h", 1)) <= 5:
+        roi_atk = getattr(self.store, "damage_icon_roi", RadarROI(x=0, y=0, w=1, h=1))
+        roi_norm = getattr(
+            self.store,
+            "damage_icon_normal_roi",
+            getattr(self.store, "damage_icon_roi", RadarROI(x=0, y=0, w=1, h=1)),
+        )
+        if int(getattr(roi_atk, "w", 1)) <= 5 or int(getattr(roi_atk, "h", 1)) <= 5:
+            return (None, None)
+        if int(getattr(roi_norm, "w", 1)) <= 5 or int(getattr(roi_norm, "h", 1)) <= 5:
             return (None, None)
 
+        cur_atk = None
+        cur_norm = None
         try:
-            cur = self._vision.grab_client_roi_bgr(hwnd, roi)
+            cur_atk = self._vision.grab_client_roi_bgr(hwnd, roi_atk)
         except Exception:
-            return (None, None)
+            cur_atk = None
+        try:
+            cur_norm = self._vision.grab_client_roi_bgr(hwnd, roi_norm)
+        except Exception:
+            cur_norm = None
 
         atk_score: float | None = None
         norm_score: float | None = None
@@ -984,9 +1165,9 @@ class Bot:
         atk_path = Path(str(getattr(self.store, "damage_icon_tpl_path", "damage_icon_tpl.png") or "damage_icon_tpl.png"))
         if atk_path.exists():
             tpl = cv2.imread(str(atk_path), cv2.IMREAD_COLOR)
-            if tpl is not None:
+            if tpl is not None and cur_atk is not None:
                 try:
-                    atk_score = float(self._vision.icon_match_score(cur_bgr=cur, tpl_bgr=tpl))
+                    atk_score = float(self._vision.icon_match_score(cur_bgr=cur_atk, tpl_bgr=tpl))
                 except Exception:
                     atk_score = None
 
@@ -995,9 +1176,9 @@ class Bot:
         )
         if norm_path.exists():
             tpl2 = cv2.imread(str(norm_path), cv2.IMREAD_COLOR)
-            if tpl2 is not None:
+            if tpl2 is not None and cur_norm is not None:
                 try:
-                    norm_score = float(self._vision.icon_match_score(cur_bgr=cur, tpl_bgr=tpl2))
+                    norm_score = float(self._vision.icon_match_score(cur_bgr=cur_norm, tpl_bgr=tpl2))
                 except Exception:
                     norm_score = None
 
@@ -1062,6 +1243,7 @@ class Bot:
 
         self._last_damage_tp_ts = now
         self.log(f"ТП по урону: {reason}. Жму Телепорт ({tp_key.upper()}) x{cnt}")
+        self._set_action(f"ТП по урону: телепорт ({tp_key.upper()})")
 
         if not self._maybe_focus_game_for_tp(hwnd):
             # Important: failure here can be due to toggle OFF OR OS/game refusing focus.
@@ -1086,8 +1268,10 @@ class Bot:
             # Use the existing confirm logic per press
             ok = self._teleport_with_retries(hwnd, rect, score_label=f"damage_tp press {i+1}/{cnt}")
             if ok:
+                self._set_action("ТП по урону: телепорт подтверждён")
                 return True
             time.sleep(interval)
+        self._set_action("ТП по урону: телепорт не подтверждён")
         return False
 
     def _maybe_enemy_alert(self, *, score_label: str) -> None:
@@ -1132,6 +1316,8 @@ class Bot:
     def _maybe_attacked_alert(
         self,
         *,
+        hwnd: int,
+        rect,
         atk_score: float | None,
         norm_score: float | None,
         atk_thr: float,
@@ -1158,6 +1344,35 @@ class Bot:
                 self._maybe_enemy_alert(score_label="attacked_icon")
             except Exception:
                 pass
+
+        # Telegram screenshot (radar) on attacked
+        try:
+            if bool(getattr(self.store, "telegram_enabled", False)) and bool(getattr(self.store, "telegram_send_on_attacked", True)):
+                now2 = time.time()
+                interval2 = max(5.0, float(getattr(self.store, "telegram_interval_s", 30.0)))
+                if now2 - float(self._last_tg_attacked_ts) >= interval2:
+                    self._last_tg_attacked_ts = now2
+                    # Prefer Text ROI ("Нет Цель поиска") so screenshot is always meaningful.
+                    radar = None
+                    roi2 = getattr(self.store, "empty_text_roi", None)
+                    if roi2 is None or int(getattr(roi2, "w", 1)) <= 5 or int(getattr(roi2, "h", 1)) <= 5:
+                        roi2 = getattr(self.store, "radar_roi", None)
+                    try:
+                        radar = self._vision.grab_radar_bgr(rect, roi2)
+                    except Exception:
+                        try:
+                            radar = self._vision.grab_client_roi_bgr(hwnd, roi2)
+                        except Exception:
+                            radar = None
+                    if radar is not None:
+                        ok, buf = cv2.imencode(".png", radar)
+                        if ok:
+                            hp_s = "?" if hp_pct is None else f"{int(hp_pct)}%"
+                            caption = f"RAVEN BOT: Атакуют=ДА | HP={hp_s}"
+                            sent = self._send_telegram_photo(caption=caption, png_bytes=bytes(buf))
+                            self.log("Telegram: скрин радара отправлен" if sent else "Telegram: не удалось отправить скрин")
+        except Exception:
+            pass
 
     def _maybe_focus_game_for_tp(self, hwnd: int) -> bool:
         """
@@ -1387,14 +1602,16 @@ class Bot:
         self._input.move_and_click_abs(abs_x, abs_y)
 
     def run_route(self, route: Route) -> None:
+        self._set_action(f"Маршрут: {route.name}")
         hwnd = self._get_game_hwnd()
         rect = get_window_rect(hwnd)
 
-        for step in route.steps:
+        for idx, step in enumerate(route.steps):
             self._pause_wait()
             if self._stop.is_set():
                 return
 
+            self._set_action(f"Маршрут: {route.name} (шаг {idx+1}/{len(route.steps)})")
             self._maybe_auto_confirm(hwnd)
             # If a menu/chat steals input, close it before performing actions.
             try:
@@ -1440,6 +1657,8 @@ class Bot:
             if delay > 0.0:
                 self._sleep_interruptible(delay)
 
+        self._set_action("Ожидание")
+
     def _sleep_interruptible(self, seconds: float) -> None:
         end = time.time() + seconds
         while not self._stop.is_set() and time.time() < end:
@@ -1468,6 +1687,7 @@ class Bot:
         self._input.press_key_hold(key, hold_s=float(getattr(self.store, "key_hold_s", 0.06)))
 
     def _run(self) -> None:
+        self._set_action("Запуск")
         self.log("Старт бота")
         self.log(f"ТП по врагу: {'ВКЛ' if bool(getattr(self.store, 'tp_on_enemy_enabled', True)) else 'ВЫКЛ'}")
         self.log(
@@ -1505,6 +1725,7 @@ class Bot:
             # AFK mode means "stand still": do not run any routes on start.
             if (not self.store.farm_without_route) and setup_route:
                 self._in_base = True
+                self._set_action("Setup: вход в локацию/город")
                 self.log("Старт: выполняю setup маршрут (вход в локацию/город)")
                 self.run_route(setup_route)
                 self._sleep_interruptible(0.8 + random.uniform(0.0, 0.4))
@@ -1512,16 +1733,19 @@ class Bot:
             if (not self.store.farm_without_route) and farm_route:
                 self._in_base = True
                 self._armed = False
+                self._set_action("Farm: выход на фарм")
                 self.log("Старт: выполняю маршрут (выход на фарм)")
                 self.run_route(farm_route)
                 self._in_base = False
                 self._sleep_interruptible(0.8 + random.uniform(0.0, 0.4))
                 self._armed = True
+                self._set_action("Фарм: мониторинг")
                 self.log("Маршрут выполнен. Бот в режиме фарма (детект включен).")
             else:
                 self._armed = True if self.store.farm_without_route else False
                 if self.store.farm_without_route:
                     self._in_base = False
+                    self._set_action("AFK: мониторинг")
                     self.log("Старт: режим без маршрута (стоим на месте, детект включен).")
         except Exception as e:
             self.log(f"Ошибка старта маршрута: {e!r}")
@@ -1530,6 +1754,12 @@ class Bot:
         while not self._stop.is_set():
             self._pause_wait()
             try:
+                if not self._pause.is_set():
+                    # default action while looping
+                    if bool(getattr(self.store, "damage_tp_enabled", False)):
+                        self._set_action("Мониторинг: урон/HP")
+                    else:
+                        self._set_action("Мониторинг: радар")
                 if not bool(getattr(self.store, "radar_detect_enabled", True)):
                     # Detection disabled: still allow damage-mode check (and keep auto-confirm alive)
                     try:
@@ -1551,6 +1781,8 @@ class Bot:
                                 icon_thr = float(getattr(self.store, "damage_icon_threshold", 0.86))
                                 norm_thr = float(getattr(self.store, "damage_icon_normal_threshold", 0.86))
                                 self._maybe_attacked_alert(
+                                    hwnd=hwnd,
+                                    rect=rect,
                                     atk_score=atk_score,
                                     norm_score=norm_score,
                                     atk_thr=float(icon_thr),
@@ -1579,7 +1811,7 @@ class Bot:
                                     ok = self._teleport_spam(hwnd, rect, reason=" + ".join(reason_parts) or "trigger")
                                     if ok:
                                         self._in_base = True
-                                        wait_s = max(1, int(self.store.teleport_wait_s))
+                                        wait_s = max(1, int(self._tp_wait_s()))
                                         self.log(f"ТП по урону: в базе. Жду {wait_s} сек.")
                                         self._sleep_interruptible(wait_s + random.uniform(-0.6, 0.6))
                                         if self._stop.is_set():
@@ -1628,6 +1860,11 @@ class Bot:
                             hp_pct = self._hp_percent(hwnd)
                         except Exception:
                             hp_pct = None
+                        try:
+                            self.last_attacked = bool(attacked)
+                            self.last_hp_pct = int(hp_pct) if hp_pct is not None else None
+                        except Exception:
+                            pass
                         hp_gate = bool(getattr(self.store, "hp_tp_enabled", True))
                         hp_thr = int(getattr(self.store, "hp_tp_threshold_pct", 70))
                         trigger_hp = bool(hp_gate and (hp_pct is not None) and (int(hp_pct) <= int(hp_thr)))
@@ -1660,6 +1897,8 @@ class Bot:
 
                         if attacked:
                             self._maybe_attacked_alert(
+                                hwnd=hwnd,
+                                rect=rect,
                                 atk_score=atk_score,
                                 norm_score=norm_score,
                                 atk_thr=float(icon_thr),
@@ -1682,7 +1921,7 @@ class Bot:
                             if ok:
                                 # Post-TP flow is same as normal TP: wait + return route.
                                 self._in_base = True
-                                wait_s = max(1, int(self.store.teleport_wait_s))
+                                wait_s = max(1, int(self._tp_wait_s()))
                                 self.log(f"ТП по урону: в базе. Жду {wait_s} сек.")
                                 self._sleep_interruptible(wait_s + random.uniform(-0.6, 0.6))
                                 if self._stop.is_set():
@@ -1840,6 +2079,16 @@ class Bot:
                 else:
                     self._enemy_streak = 0
 
+                # Publish latest detect info for mini UI.
+                try:
+                    self.last_radar_enemy = bool(enemy)
+                    self.last_radar_score_label = str(score_label)
+                    if "empty_text_match=" in str(score_label):
+                        self.last_text_match_score = float(score)
+                        self.last_text_cap_mode = str(cap_mode)
+                except Exception:
+                    pass
+
                 required = max(1, int(self.store.detect_confirm_streak))
                 cooldown = max(0.0, float(self.store.min_tp_cooldown_s))
                 can_tp_by_time = (time.time() - self._last_tp_ts) >= cooldown
@@ -1888,7 +2137,7 @@ class Bot:
 
                     self._in_base = True
 
-                    wait_s = max(1, int(self.store.teleport_wait_s))
+                    wait_s = max(1, int(self._tp_wait_s()))
                     self.log(f"В базе. Жду {wait_s} сек.")
                     self._sleep_interruptible(wait_s + random.uniform(-0.6, 0.6))
 
