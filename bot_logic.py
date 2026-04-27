@@ -33,6 +33,7 @@ from window_manager import (
     get_window_rect,
     to_abs_xy,
 )
+ 
 
 
 @dataclass
@@ -51,7 +52,7 @@ class Point:
 
 @dataclass
 class RouteStep:
-    kind: str  # "click" | "key" | "wait"
+    kind: str  # "click" | "key" | "wait" | "wait_range" | "confirm" | "gate"
     rel_x: int = 0
     rel_y: int = 0
     x_pct: float | None = None
@@ -59,6 +60,9 @@ class RouteStep:
     button: str = "left"
     key: str = ""
     delay_s: float = 0.15
+    timeout_s: float = 6.0  # used by kind="confirm"
+    min_s: float = 0.0  # used by kind="wait_range"
+    max_s: float = 0.0  # used by kind="wait_range"
 
     def as_dict(self) -> dict:
         d = {
@@ -72,6 +76,11 @@ class RouteStep:
         if self.kind == "click" and self.x_pct is not None and self.y_pct is not None:
             d["x_pct"] = float(self.x_pct)
             d["y_pct"] = float(self.y_pct)
+        if self.kind == "confirm":
+            d["timeout_s"] = float(self.timeout_s)
+        if self.kind == "wait_range":
+            d["min_s"] = float(self.min_s)
+            d["max_s"] = float(self.max_s)
         return d
 
     @staticmethod
@@ -85,6 +94,9 @@ class RouteStep:
             button=str(d.get("button", "left")),
             key=str(d.get("key", "")),
             delay_s=float(d.get("delay_s", 0.15)),
+            timeout_s=float(d.get("timeout_s", 6.0)),
+            min_s=float(d.get("min_s", 0.0)),
+            max_s=float(d.get("max_s", 0.0)),
         )
 
 
@@ -219,6 +231,7 @@ class PointsStore:
         # --- Hotkeys ---
         # Key name from preset list, e.g. "f8", "pause", "scrolllock"
         self.pause_hotkey: str = "f8"
+        self.stop_record_hotkey: str = "f9"
 
         # --- Menu/chat auto-close (ESC) ---
         self.menu_autoclose_enabled: bool = False
@@ -228,6 +241,19 @@ class PointsStore:
         self.menu_autoclose_tpl_path: str = "menu_open_tpl.png"
         self.menu_autoclose_threshold: float = 0.86
         self.menu_autoclose_cooldown_s: float = 1.0
+
+        # --- Confirm popup (gate/enter dungeon) ---
+        self.confirm_popup_roi = RadarROI(x=0, y=0, w=1, h=1)
+        self.confirm_popup_tpl_path: str = "confirm_popup_tpl.png"
+        self.confirm_popup_threshold: float = 0.86
+
+        # --- Gate click assist (rotate camera by RMB + click gate) ---
+        self.gate_roi = RadarROI(x=0, y=0, w=1, h=1)
+        self.gate_tpl_path: str = "gate_tpl.png"
+        self.gate_threshold: float = 0.83
+        self.gate_seek_timeout_s: float = 6.0
+        self.gate_center_margin_px: int = 40
+        self.gate_turn_step_px: int = 120
 
         # --- Death detection + recovery route ---
         self.death_detect_enabled: bool = False
@@ -364,6 +390,7 @@ class PointsStore:
         self.telegram_send_on_attacked = bool(data.get("telegram_send_on_attacked", True))
         self.telegram_interval_s = float(data.get("telegram_interval_s", 30.0))
         self.pause_hotkey = str(data.get("pause_hotkey", "f8") or "f8").strip().lower()
+        self.stop_record_hotkey = str(data.get("stop_record_hotkey", "f9") or "f9").strip().lower()
         self.menu_autoclose_enabled = bool(data.get("menu_autoclose_enabled", False))
         self.menu_autoclose_key = str(data.get("menu_autoclose_key", "esc") or "esc").strip().lower()
         self.menu_autoclose_attempts = int(data.get("menu_autoclose_attempts", 2))
@@ -371,6 +398,15 @@ class PointsStore:
         self.menu_autoclose_tpl_path = str(data.get("menu_autoclose_tpl_path", "menu_open_tpl.png") or "menu_open_tpl.png")
         self.menu_autoclose_threshold = float(data.get("menu_autoclose_threshold", 0.86))
         self.menu_autoclose_cooldown_s = float(data.get("menu_autoclose_cooldown_s", 1.0))
+        self.confirm_popup_roi = RadarROI.from_dict(data.get("confirm_popup_roi", {}))
+        self.confirm_popup_tpl_path = str(data.get("confirm_popup_tpl_path", "confirm_popup_tpl.png") or "confirm_popup_tpl.png")
+        self.confirm_popup_threshold = float(data.get("confirm_popup_threshold", 0.86))
+        self.gate_roi = RadarROI.from_dict(data.get("gate_roi", {}))
+        self.gate_tpl_path = str(data.get("gate_tpl_path", "gate_tpl.png") or "gate_tpl.png")
+        self.gate_threshold = float(data.get("gate_threshold", 0.83))
+        self.gate_seek_timeout_s = float(data.get("gate_seek_timeout_s", 6.0))
+        self.gate_center_margin_px = int(data.get("gate_center_margin_px", 40))
+        self.gate_turn_step_px = int(data.get("gate_turn_step_px", 120))
         self.death_detect_enabled = bool(data.get("death_detect_enabled", False))
         self.death_roi = RadarROI.from_dict(data.get("death_roi", {}))
         self.death_tpl_path = str(data.get("death_tpl_path", "death_tpl.png") or "death_tpl.png")
@@ -472,6 +508,7 @@ class PointsStore:
             "telegram_send_on_attacked": bool(self.telegram_send_on_attacked),
             "telegram_interval_s": float(self.telegram_interval_s),
             "pause_hotkey": str(self.pause_hotkey),
+            "stop_record_hotkey": str(self.stop_record_hotkey),
             "menu_autoclose_enabled": bool(self.menu_autoclose_enabled),
             "menu_autoclose_key": str(self.menu_autoclose_key),
             "menu_autoclose_attempts": int(self.menu_autoclose_attempts),
@@ -479,6 +516,15 @@ class PointsStore:
             "menu_autoclose_tpl_path": str(self.menu_autoclose_tpl_path),
             "menu_autoclose_threshold": float(self.menu_autoclose_threshold),
             "menu_autoclose_cooldown_s": float(self.menu_autoclose_cooldown_s),
+            "confirm_popup_roi": self.confirm_popup_roi.as_dict(),
+            "confirm_popup_tpl_path": str(self.confirm_popup_tpl_path),
+            "confirm_popup_threshold": float(self.confirm_popup_threshold),
+            "gate_roi": self.gate_roi.as_dict(),
+            "gate_tpl_path": str(self.gate_tpl_path),
+            "gate_threshold": float(self.gate_threshold),
+            "gate_seek_timeout_s": float(self.gate_seek_timeout_s),
+            "gate_center_margin_px": int(self.gate_center_margin_px),
+            "gate_turn_step_px": int(self.gate_turn_step_px),
             "death_detect_enabled": bool(self.death_detect_enabled),
             "death_roi": self.death_roi.as_dict(),
             "death_tpl_path": str(self.death_tpl_path),
@@ -1529,6 +1575,145 @@ class Bot:
         self.log(f"Шаблон смерти сохранён: {path} (roi={roi.x},{roi.y},{roi.w},{roi.h})")
         return path
 
+    def capture_confirm_popup_template(self) -> Path:
+        """
+        Capture a template of the "confirm enter" popup (e.g. gate/dungeon entry dialog).
+        """
+        hwnd = self._get_game_hwnd()
+        roi = getattr(self.store, "confirm_popup_roi", RadarROI(x=0, y=0, w=1, h=1))
+        img = self._vision.grab_client_roi_bgr(hwnd, roi)
+        path = Path(str(getattr(self.store, "confirm_popup_tpl_path", "confirm_popup_tpl.png") or "confirm_popup_tpl.png"))
+        cv2.imwrite(str(path), img)
+        self.log(f"Шаблон подтверждения входа сохранён: {path} (roi={roi.x},{roi.y},{roi.w},{roi.h})")
+        return path
+
+    def capture_gate_template(self) -> Path:
+        """
+        Capture a template of the gate/portal (for GATE step).
+        """
+        hwnd = self._get_game_hwnd()
+        roi = getattr(self.store, "gate_roi", RadarROI(x=0, y=0, w=1, h=1))
+        img = self._vision.grab_client_roi_bgr(hwnd, roi)
+        path = Path(str(getattr(self.store, "gate_tpl_path", "gate_tpl.png") or "gate_tpl.png"))
+        cv2.imwrite(str(path), img)
+        self.log(f"Шаблон ворот сохранён: {path} (roi={roi.x},{roi.y},{roi.w},{roi.h})")
+        return path
+
+    def _confirm_popup_score(self, hwnd: int) -> float | None:
+        roi = getattr(self.store, "confirm_popup_roi", RadarROI(x=0, y=0, w=1, h=1))
+        if int(getattr(roi, "w", 1)) <= 5 or int(getattr(roi, "h", 1)) <= 5:
+            return None
+
+    def _gate_match(self, hwnd: int) -> tuple[float, int, int] | None:
+        roi = getattr(self.store, "gate_roi", RadarROI(x=0, y=0, w=1, h=1))
+        if int(getattr(roi, "w", 1)) <= 10 or int(getattr(roi, "h", 1)) <= 10:
+            return None
+        tpl_path = Path(str(getattr(self.store, "gate_tpl_path", "gate_tpl.png") or "gate_tpl.png"))
+        if not tpl_path.exists():
+            return None
+        tpl = cv2.imread(str(tpl_path), cv2.IMREAD_COLOR)
+        if tpl is None:
+            return None
+        try:
+            cur = self._vision.grab_client_roi_bgr(hwnd, roi)
+        except Exception:
+            return None
+        # If template equals ROI (captured as full ROI), comparing identical sizes is OK.
+        # For better robustness users should capture a smaller distinctive patch, but we handle both cases.
+        try:
+            a = cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY)
+            b = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
+            a = cv2.GaussianBlur(a, (3, 3), 0)
+            b = cv2.GaussianBlur(b, (3, 3), 0)
+            if a.shape[0] < b.shape[0] or a.shape[1] < b.shape[1]:
+                # resize template down if misconfigured
+                b = cv2.resize(b, (min(a.shape[1], b.shape[1]), min(a.shape[0], b.shape[0])))
+            res = cv2.matchTemplate(a, b, cv2.TM_CCOEFF_NORMED)
+            _min_val, max_val, _min_loc, max_loc = cv2.minMaxLoc(res)
+            cx = int(max_loc[0] + (b.shape[1] // 2))
+            cy = int(max_loc[1] + (b.shape[0] // 2))
+            return float(max_val), cx, cy
+        except Exception:
+            return None
+
+    def _gate_seek_and_click(self, hwnd: int) -> bool:
+        """
+        Find gate by template in gate_roi, rotate camera using RMB drag to center it, then left click.
+        """
+        roi = getattr(self.store, "gate_roi", RadarROI(x=0, y=0, w=1, h=1))
+        thr = float(getattr(self.store, "gate_threshold", 0.83))
+        timeout = max(1.0, float(getattr(self.store, "gate_seek_timeout_s", 6.0)))
+        margin = max(5, int(getattr(self.store, "gate_center_margin_px", 40)))
+        step_px = max(20, int(getattr(self.store, "gate_turn_step_px", 120)))
+
+        # keep RMB held while turning
+        self._input.mouse_down("right")
+        t0 = time.time()
+        ok = False
+        try:
+            while (time.time() - t0) < timeout and (not self._stop.is_set()):
+                self._pause_wait()
+                m = self._gate_match(hwnd)
+                if m is None:
+                    time.sleep(0.05)
+                    continue
+                score, cx, cy = m
+                if score < thr:
+                    time.sleep(0.05)
+                    continue
+                # want gate near center of ROI
+                dx = int(cx - (int(roi.w) // 2))
+                if abs(dx) <= margin:
+                    ok = True
+                    break
+                # drag opposite direction to bring gate to center (heuristic)
+                drag = -step_px if dx > 0 else step_px
+                self._input.move_rel(drag, 0, duration=0.0)
+                time.sleep(0.04)
+        finally:
+            self._input.mouse_up("right")
+
+        if not ok:
+            return False
+
+        # Recompute final location and click it
+        m2 = self._gate_match(hwnd)
+        if m2 is None or m2[0] < thr:
+            return False
+        _sc, cx2, cy2 = m2
+        client_x = int(roi.x + cx2)
+        client_y = int(roi.y + cy2)
+        try:
+            abs_x, abs_y = win32gui.ClientToScreen(int(hwnd), (int(client_x), int(client_y)))
+        except Exception:
+            # fallback: window-rect based
+            rect = get_window_rect(hwnd)
+            abs_x, abs_y = to_abs_xy(rect, client_x, client_y)
+        self._input.move_and_click_abs(int(abs_x), int(abs_y), button="left")
+        return True
+        tpl_path = Path(str(getattr(self.store, "confirm_popup_tpl_path", "confirm_popup_tpl.png") or "confirm_popup_tpl.png"))
+        if not tpl_path.exists():
+            return None
+        tpl = cv2.imread(str(tpl_path), cv2.IMREAD_COLOR)
+        if tpl is None:
+            return None
+        try:
+            cur = self._vision.grab_client_roi_bgr(hwnd, roi)
+        except Exception:
+            return None
+        try:
+            a = cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY)
+            b = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
+            a = cv2.GaussianBlur(a, (3, 3), 0)
+            b = cv2.GaussianBlur(b, (3, 3), 0)
+            if a.shape[0] < b.shape[0] or a.shape[1] < b.shape[1]:
+                b = cv2.resize(b, (min(a.shape[1], b.shape[1]), min(a.shape[0], b.shape[0])))
+            res = cv2.matchTemplate(a, b, cv2.TM_CCOEFF_NORMED)
+            _min_val, max_val, _min_loc, _max_loc = cv2.minMaxLoc(res)
+            return float(max_val)
+        except Exception:
+            return None
+
     def _death_score(self, hwnd: int) -> float | None:
         if not bool(getattr(self.store, "death_detect_enabled", False)):
             return None
@@ -1621,6 +1806,52 @@ class Bot:
 
             if step.kind == "wait":
                 pass
+            elif step.kind == "wait_range":
+                mn = float(getattr(step, "min_s", 0.0) or 0.0)
+                mx = float(getattr(step, "max_s", 0.0) or 0.0)
+                if mx < mn:
+                    mn, mx = mx, mn
+                delay = random.uniform(max(0.0, mn), max(0.0, mx))
+                if delay > 0:
+                    self._sleep_interruptible(delay)
+                # already slept; do not apply extra post-step delay below
+                continue
+            elif step.kind == "gate":
+                if not self._ensure_game_foreground_strict(
+                    hwnd,
+                    allow_steal=bool(getattr(self.store, "focus_steal_enabled", True)),
+                    why="route:gate",
+                ):
+                    continue
+                ok = False
+                try:
+                    ok = self._gate_seek_and_click(hwnd)
+                except Exception:
+                    ok = False
+                self.log("GATE: клик выполнен" if ok else "GATE: не удалось найти/кликнуть ворота")
+                # let next steps handle CONFIRM etc.
+            elif step.kind == "confirm":
+                # Wait until confirm popup appears, then press confirm key once.
+                timeout_s = max(0.5, float(getattr(step, "timeout_s", 6.0) or 6.0))
+                thr = float(getattr(self.store, "confirm_popup_threshold", 0.86))
+                key = (self.store.auto_confirm_key or "y").strip().lower() or "y"
+                t0 = time.time()
+                ok_popup = False
+                while (time.time() - t0) < timeout_s and (not self._stop.is_set()):
+                    self._pause_wait()
+                    sc = self._confirm_popup_score(hwnd)
+                    if sc is not None and sc >= thr:
+                        ok_popup = True
+                        break
+                    time.sleep(0.05)
+                if ok_popup:
+                    self.log(f"CONFIRM: окно найдено, жму {key.upper()}")
+                    try:
+                        self._input.press_key_any(key, hold_s=float(getattr(self.store, "key_hold_s", 0.06)))
+                    except Exception:
+                        pass
+                else:
+                    self.log("CONFIRM: окно не найдено (timeout)")
             elif step.kind == "key":
                 if not self._ensure_game_foreground_strict(
                     hwnd,
@@ -1631,7 +1862,7 @@ class Bot:
                     continue
                 key = (step.key or "").strip().lower()
                 if key:
-                    self._input.press_key(key)
+                    self._input.press_key_any(key, hold_s=float(getattr(self.store, "key_hold_s", 0.06)))
             else:
                 # Prefer normalized coordinates if present (robust to resolution/scale changes)
                 if not self._ensure_game_foreground_strict(

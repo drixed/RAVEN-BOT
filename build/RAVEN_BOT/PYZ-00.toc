@@ -1206,6 +1206,7 @@
   ('urllib.parse', 'C:\\Python314\\Lib\\urllib\\parse.py', 'PYMODULE'),
   ('urllib.request', 'C:\\Python314\\Lib\\urllib\\request.py', 'PYMODULE'),
   ('urllib.response', 'C:\\Python314\\Lib\\urllib\\response.py', 'PYMODULE'),
+  ('uuid', 'C:\\Python314\\Lib\\uuid.py', 'PYMODULE'),
   ('vision', 'F:\\RAVEN BOT\\vision.py', 'PYMODULE'),
   ('webbrowser', 'C:\\Python314\\Lib\\webbrowser.py', 'PYMODULE'),
   ('win32con',

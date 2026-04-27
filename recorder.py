@@ -35,8 +35,22 @@ def _vk_to_key_name(vk: int) -> Optional[str]:
         win32con.VK_RETURN: "enter",
         win32con.VK_ESCAPE: "esc",
         win32con.VK_TAB: "tab",
+        win32con.VK_BACK: "backspace",
+        win32con.VK_DELETE: "delete",
+        win32con.VK_LEFT: "left",
+        win32con.VK_RIGHT: "right",
+        win32con.VK_UP: "up",
+        win32con.VK_DOWN: "down",
+        win32con.VK_HOME: "home",
+        win32con.VK_END: "end",
+        win32con.VK_PRIOR: "pageup",
+        win32con.VK_NEXT: "pagedown",
     }
-    return mapping.get(vk)
+    if vk in mapping:
+        return mapping[vk]
+    # For everything else, keep the raw VK marker so playback still works via press_vk_hold
+    # (InputController.press_key_any handles "vk:NN").
+    return f"vk:{int(vk)}"
 
 
 class RouteRecorder:
@@ -70,12 +84,19 @@ class RouteRecorder:
 
         self._prev_left = False
         self._prev_right = False
+        self._prev_mid = False
+        self._prev_x1 = False
+        self._prev_x2 = False
         self._prev_keys: dict[int, bool] = {}
 
-        # record these vk keys (letters/digits + F-keys + common)
-        self._watch_vks = list(range(0x30, 0x5B))  # 0-9 + A-Z
-        self._watch_vks += list(range(win32con.VK_F1, win32con.VK_F12 + 1))
-        self._watch_vks += [win32con.VK_SPACE, win32con.VK_RETURN, win32con.VK_ESCAPE, win32con.VK_TAB]
+        # Record virtually all VKs (so route recording captures "everything").
+        self._watch_vks = list(range(1, 256))
+        # Mouse buttons are recorded separately (click steps), so skip them here.
+        for vk in [win32con.VK_LBUTTON, win32con.VK_RBUTTON, win32con.VK_MBUTTON, win32con.VK_XBUTTON1, win32con.VK_XBUTTON2]:
+            try:
+                self._watch_vks.remove(int(vk))
+            except ValueError:
+                pass
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -137,6 +158,9 @@ class RouteRecorder:
             # Mouse: edge-detect down state (doesn't "consume" click for some games).
             left_down = self._poll_down(win32con.VK_LBUTTON)
             right_down = self._poll_down(win32con.VK_RBUTTON)
+            mid_down = self._poll_down(win32con.VK_MBUTTON)
+            x1_down = self._poll_down(win32con.VK_XBUTTON1)
+            x2_down = self._poll_down(win32con.VK_XBUTTON2)
 
             if in_win and left_down and not self._prev_left:
                 self._record_step(
@@ -146,9 +170,24 @@ class RouteRecorder:
                 self._record_step(
                     RouteStep(kind="click", rel_x=int(x - rect.left), rel_y=int(y - rect.top), button="right")
                 )
+            if in_win and mid_down and not self._prev_mid:
+                self._record_step(
+                    RouteStep(kind="click", rel_x=int(x - rect.left), rel_y=int(y - rect.top), button="middle")
+                )
+            if in_win and x1_down and not self._prev_x1:
+                self._record_step(
+                    RouteStep(kind="click", rel_x=int(x - rect.left), rel_y=int(y - rect.top), button="x1")
+                )
+            if in_win and x2_down and not self._prev_x2:
+                self._record_step(
+                    RouteStep(kind="click", rel_x=int(x - rect.left), rel_y=int(y - rect.top), button="x2")
+                )
 
             self._prev_left = left_down
             self._prev_right = right_down
+            self._prev_mid = mid_down
+            self._prev_x1 = x1_down
+            self._prev_x2 = x2_down
 
             # keys
             # For popups, cursor can be outside window while game still consumes keys.

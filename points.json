@@ -11,73 +11,100 @@
   "active_name": "tmp",
   "routes": [
     {
-      "name": "tmp",
+      "name": "68",
       "steps": [
         {
-          "kind": "click",
-          "rel_x": 103,
-          "rel_y": 478,
+          "kind": "key",
+          "rel_x": 0,
+          "rel_y": 0,
           "button": "left",
-          "key": "",
-          "delay_s": 0.15
-        }
-      ]
-    },
-    {
-      "name": "route_1",
-      "steps": [
-        {
-          "kind": "click",
-          "rel_x": 1880,
-          "rel_y": 62,
-          "button": "left",
-          "key": "",
-          "delay_s": 1.5038455000030808
+          "key": "m",
+          "delay_s": 0.5952271000714973
         },
         {
           "kind": "click",
-          "rel_x": 1885,
-          "rel_y": 315,
+          "rel_x": 946,
+          "rel_y": 686,
           "button": "left",
           "key": "",
-          "delay_s": 1.0116886000032537
+          "delay_s": 1.3197785000083968
         },
         {
           "kind": "click",
-          "rel_x": 1200,
-          "rel_y": 713,
+          "rel_x": 1149,
+          "rel_y": 769,
           "button": "left",
           "key": "",
-          "delay_s": 2.2857807999826036
+          "delay_s": 0.8114377999445423
+        },
+        {
+          "kind": "wait",
+          "rel_x": 0,
+          "rel_y": 0,
+          "button": "left",
+          "key": "",
+          "delay_s": 7.0
         },
         {
           "kind": "click",
-          "rel_x": 1885,
-          "rel_y": 76,
+          "rel_x": 1375,
+          "rel_y": 712,
+          "button": "right",
+          "key": "",
+          "delay_s": 7.272582000005059
+        },
+        {
+          "kind": "gate",
+          "rel_x": 0,
+          "rel_y": 0,
           "button": "left",
           "key": "",
-          "delay_s": 0.8291821000166237
+          "delay_s": 0.2
         },
         {
           "kind": "click",
-          "rel_x": 1865,
-          "rel_y": 88,
+          "rel_x": 1140,
+          "rel_y": 536,
           "button": "left",
           "key": "",
-          "delay_s": 1.0645071999751963
+          "delay_s": 5.060050099971704
+        },
+        {
+          "kind": "key",
+          "rel_x": 0,
+          "rel_y": 0,
+          "button": "left",
+          "key": "y",
+          "delay_s": 3.198996200109832
+        },
+        {
+          "kind": "key",
+          "rel_x": 0,
+          "rel_y": 0,
+          "button": "left",
+          "key": "m",
+          "delay_s": 2.785451899981126
         },
         {
           "kind": "click",
-          "rel_x": 1873,
-          "rel_y": 83,
+          "rel_x": 1252,
+          "rel_y": 348,
           "button": "left",
           "key": "",
-          "delay_s": 0.5173473000177182
+          "delay_s": 1.399523500003852
+        },
+        {
+          "kind": "click",
+          "rel_x": 1237,
+          "rel_y": 395,
+          "button": "left",
+          "key": "",
+          "delay_s": 0.44487699994351715
         }
       ]
     }
   ],
-  "active_route_name": "route_1",
+  "active_route_name": "68",
   "profiles": [
     {
       "name": "default",
@@ -157,9 +184,109 @@
       "routes": [],
       "setup_route_name": null,
       "farm_route_name": null
+    },
+    {
+      "name": "68",
+      "routes": [
+        {
+          "name": "68",
+          "steps": [
+            {
+              "kind": "key",
+              "rel_x": 0,
+              "rel_y": 0,
+              "button": "left",
+              "key": "m",
+              "delay_s": 0.5952271000714973
+            },
+            {
+              "kind": "click",
+              "rel_x": 946,
+              "rel_y": 686,
+              "button": "left",
+              "key": "",
+              "delay_s": 1.3197785000083968
+            },
+            {
+              "kind": "click",
+              "rel_x": 1149,
+              "rel_y": 769,
+              "button": "left",
+              "key": "",
+              "delay_s": 0.8114377999445423
+            },
+            {
+              "kind": "wait",
+              "rel_x": 0,
+              "rel_y": 0,
+              "button": "left",
+              "key": "",
+              "delay_s": 7.0
+            },
+            {
+              "kind": "click",
+              "rel_x": 1375,
+              "rel_y": 712,
+              "button": "right",
+              "key": "",
+              "delay_s": 7.272582000005059
+            },
+            {
+              "kind": "gate",
+              "rel_x": 0,
+              "rel_y": 0,
+              "button": "left",
+              "key": "",
+              "delay_s": 0.2
+            },
+            {
+              "kind": "click",
+              "rel_x": 1140,
+              "rel_y": 536,
+              "button": "left",
+              "key": "",
+              "delay_s": 5.060050099971704
+            },
+            {
+              "kind": "key",
+              "rel_x": 0,
+              "rel_y": 0,
+              "button": "left",
+              "key": "y",
+              "delay_s": 3.198996200109832
+            },
+            {
+              "kind": "key",
+              "rel_x": 0,
+              "rel_y": 0,
+              "button": "left",
+              "key": "m",
+              "delay_s": 2.785451899981126
+            },
+            {
+              "kind": "click",
+              "rel_x": 1252,
+              "rel_y": 348,
+              "button": "left",
+              "key": "",
+              "delay_s": 1.399523500003852
+            },
+            {
+              "kind": "click",
+              "rel_x": 1237,
+              "rel_y": 395,
+              "button": "left",
+              "key": "",
+              "delay_s": 0.44487699994351715
+            }
+          ]
+        }
+      ],
+      "setup_route_name": null,
+      "farm_route_name": "68"
     }
   ],
-  "active_profile_name": "default",
+  "active_profile_name": "68",
   "radar_roi": {
     "x": 1501,
     "y": 111,
@@ -194,30 +321,30 @@
   "diff_min_changed_pixels": 400,
   "diff_threshold": 22,
   "teleport_key": "f4",
-  "key_hold_s": 0.03,
+  "key_hold_s": 0.04,
   "tp_on_enemy_enabled": false,
   "radar_detect_enabled": false,
   "post_tp_action": "press_r",
   "post_tp_key": "r",
   "post_tp_delay_s": 0.25,
-  "auto_confirm_enabled": true,
+  "auto_confirm_enabled": false,
   "auto_confirm_key": "y",
   "auto_confirm_interval_s": 0.8,
   "focus_steal_enabled": true,
   "tp_focus_steal_enabled": true,
-  "farm_without_route": true,
+  "farm_without_route": false,
   "detect_confirm_streak": 3,
   "min_tp_cooldown_s": 10.0,
   "empty_match_threshold": 0.88,
-  "teleport_wait_s": 60,
-  "teleport_wait_min_s": 60,
+  "teleport_wait_s": 10,
+  "teleport_wait_min_s": 10,
   "teleport_wait_max_s": 60,
   "check_interval_s": 0.25,
   "loop_jitter_s": 0.05,
   "move_time_min_s": 0.02,
   "move_time_max_s": 0.06,
   "route_delay_min_s": 0.0,
-  "route_delay_max_s": 0.03,
+  "route_delay_max_s": 0.0,
   "auto_buy_potions_enabled": false,
   "auto_buy_potions_threshold": 300,
   "auto_buy_potions_roi": {
@@ -244,6 +371,7 @@
   "telegram_send_on_attacked": true,
   "telegram_interval_s": 30.0,
   "pause_hotkey": "end",
+  "stop_record_hotkey": "f9",
   "menu_autoclose_enabled": false,
   "menu_autoclose_key": "esc",
   "menu_autoclose_attempts": 1,
@@ -256,6 +384,25 @@
   "menu_autoclose_tpl_path": "menu_open_tpl.png",
   "menu_autoclose_threshold": 0.86,
   "menu_autoclose_cooldown_s": 1.0,
+  "confirm_popup_roi": {
+    "x": 932,
+    "y": 550,
+    "w": 697,
+    "h": 338
+  },
+  "confirm_popup_tpl_path": "confirm_popup_tpl.png",
+  "confirm_popup_threshold": 0.86,
+  "gate_roi": {
+    "x": 444,
+    "y": 90,
+    "w": 1020,
+    "h": 524
+  },
+  "gate_tpl_path": "gate_tpl.png",
+  "gate_threshold": 0.83,
+  "gate_seek_timeout_s": 6.0,
+  "gate_center_margin_px": 40,
+  "gate_turn_step_px": 120,
   "death_detect_enabled": false,
   "death_roi": {
     "x": 89,
@@ -269,7 +416,7 @@
   "death_cooldown_s": 19.0,
   "schedule_enabled": false,
   "schedule_start_hhmm": "02:00",
-  "schedule_duration_h": 8.0,
+  "schedule_duration_h": 8.5,
   "schedule_mode": "route",
   "schedule_daily": true,
   "schedule_last_start_date": "",
@@ -277,8 +424,8 @@
   "damage_icon_roi": {
     "x": 387,
     "y": 2,
-    "w": 51,
-    "h": 58
+    "w": 50,
+    "h": 57
   },
   "damage_icon_normal_roi": {
     "x": 394,
@@ -301,6 +448,6 @@
   "hp_tp_threshold_pct": 70,
   "damage_tp_press_count": 5,
   "damage_tp_press_interval_s": 0.12,
-  "damage_tp_cooldown_s": 8.0,
+  "damage_tp_cooldown_s": 4.0,
   "ui_theme": "cyborg"
 }

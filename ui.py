@@ -32,6 +32,8 @@ from window_manager import (
     parse_window_item,
 )
 
+APP_BUILD = "2026-04-27 gate-ui"
+
 
 class UI:
     def __init__(self, root: tk.Tk, store: PointsStore, bot: Bot):
@@ -53,7 +55,7 @@ class UI:
         self._routebuilder_drag: dict | None = None
         self._steps_menu: tk.Menu | None = None
 
-        self.root.title("RAVEN BOT")
+        self.root.title(f"RAVEN BOT [{APP_BUILD}]")
         # Bigger default so left panel controls fit comfortably.
         self.root.geometry("1400x900")
         self.root.minsize(1200, 780)
@@ -68,8 +70,11 @@ class UI:
 
         # Global hotkey (pause/resume)
         self._hotkey_id_pause = 9001
-        self._hotkey_registered = False
+        self._hotkey_id_stop_record = 9002
+        self._pause_hotkey_registered = False
+        self._stop_record_hotkey_registered = False
         self._register_pause_hotkey()
+        self._register_stop_record_hotkey()
 
         # Scheduler runtime
         self._schedule_stop_ts: float | None = None
@@ -430,12 +435,10 @@ class UI:
         """
         try:
             # Unregister previous if any
-            if self._hotkey_registered:
-                try:
-                    win32gui.UnregisterHotKey(None, int(self._hotkey_id_pause))
-                except Exception:
-                    pass
-                self._hotkey_registered = False
+            try:
+                win32gui.UnregisterHotKey(None, int(self._hotkey_id_pause))
+            except Exception:
+                pass
 
             key_name = str(getattr(self.store, "pause_hotkey", "f8") or "f8").strip().lower()
             vk = self._hotkey_name_to_vk(key_name)
@@ -446,11 +449,29 @@ class UI:
                 self.store.save()
 
             win32gui.RegisterHotKey(None, int(self._hotkey_id_pause), 0, int(vk))
-            self._hotkey_registered = True
+            self._pause_hotkey_registered = True
             self.log(f"Хоткей паузы: {key_name.upper()} (глобально)")
         except Exception as e:
-            self._hotkey_registered = False
+            self._pause_hotkey_registered = False
             self.log(f"Хоткей паузы: не удалось зарегистрировать ({e!r})")
+
+    def _register_stop_record_hotkey(self) -> None:
+        """
+        Global hotkey to stop route recording (works while game is active).
+        """
+        try:
+            try:
+                win32gui.UnregisterHotKey(None, int(self._hotkey_id_stop_record))
+            except Exception:
+                pass
+            key_name = str(getattr(self.store, "stop_record_hotkey", "f9") or "f9").strip().lower()
+            vk = self._hotkey_name_to_vk(key_name) or win32con.VK_F9
+            win32gui.RegisterHotKey(None, int(self._hotkey_id_stop_record), 0, int(vk))
+            self._stop_record_hotkey_registered = True
+            self.log(f"Хоткей записи: {key_name.upper()} = Стоп запись")
+        except Exception as e:
+            self._stop_record_hotkey_registered = False
+            self.log(f"Хоткей записи: не удалось зарегистрировать ({e!r})")
 
     def _hotkey_name_to_vk(self, name: str) -> int | None:
         n = (name or "").strip().lower()
@@ -683,6 +704,9 @@ class UI:
         self.steps_list.grid(row=0, column=0, sticky="nsew")
         self.steps_list.bind("<Button-3>", lambda e: self._on_steps_right_click(e, self.steps_list))
         self.steps_list.bind("<Double-1>", lambda e: self._on_steps_double_click(e, self.steps_list))
+        self.steps_list.bind("<ButtonPress-1>", lambda e: self._on_steps_drag_start(e, self.steps_list))
+        self.steps_list.bind("<B1-Motion>", lambda e: self._on_steps_drag_move(e, self.steps_list))
+        self.steps_list.bind("<ButtonRelease-1>", lambda e: self._on_steps_drag_end(e, self.steps_list))
         steps_scroll = tb.Scrollbar(steps_frame, orient="vertical", command=self.steps_list.yview)
         steps_scroll.grid(row=0, column=1, sticky="ns")
         self.steps_list.configure(yscrollcommand=steps_scroll.set)
@@ -713,8 +737,26 @@ class UI:
         )
         self.record_insert_wait_btn.grid(row=0, column=2, padx=(10, 0), sticky="w")
 
+        # Control point during recording: insert CONFIRM marker (wait popup -> press Y)
+        rec_confirm_row = tb.Frame(left_box)
+        rec_confirm_row.grid(row=21, column=0, sticky="ew", pady=(0, 10))
+        rec_confirm_row.grid_columnconfigure(2, weight=1)
+        tb.Label(rec_confirm_row, text="CONFIRM timeout (сек)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.record_confirm_timeout_var = tk.DoubleVar(value=6.0)
+        tb.Spinbox(rec_confirm_row, from_=1.0, to=30.0, increment=0.5, textvariable=self.record_confirm_timeout_var, width=8).grid(
+            row=0, column=1, padx=(10, 0), sticky="w"
+        )
+        self.record_insert_confirm_btn = tb.Button(
+            rec_confirm_row,
+            text="Вставить CONFIRM",
+            bootstyle="outline",
+            command=self._on_record_insert_confirm,
+            state="disabled",
+        )
+        self.record_insert_confirm_btn.grid(row=0, column=2, padx=(10, 0), sticky="w")
+
         steps_btn_row2 = tb.Frame(left_box)
-        steps_btn_row2.grid(row=21, column=0, sticky="ew", pady=(0, 10))
+        steps_btn_row2.grid(row=22, column=0, sticky="ew", pady=(0, 10))
         steps_btn_row2.grid_columnconfigure(0, weight=1)
         tb.Button(steps_btn_row2, text="Удалить шаг", command=self._on_remove_step, bootstyle="outline").grid(
             row=0, column=0, sticky="ew"
@@ -724,7 +766,7 @@ class UI:
         )
 
         self.save_route_btn = tb.Button(left_box, text="Сохранить маршрут", command=self._on_save_route, bootstyle="primary")
-        self.save_route_btn.grid(row=22, column=0, sticky="ew")
+        self.save_route_btn.grid(row=23, column=0, sticky="ew")
 
         # Right: tabs
         right = tb.Frame(content, padding=10)
@@ -831,8 +873,18 @@ class UI:
         tb.Combobox(row0c, textvariable=self.pause_hotkey_var, state="readonly", values=hotkeys, width=12).grid(
             row=0, column=2, padx=(10, 0), sticky="w"
         )
+        tb.Label(row0c, text="Стоп запись", bootstyle="secondary").grid(row=1, column=1, padx=(10, 0), sticky="w", pady=(6, 0))
+        self.stop_record_hotkey_var = tk.StringVar(
+            value=str(getattr(self.store, "stop_record_hotkey", "f9") or "f9").strip().lower()
+        )
+        tb.Combobox(row0c, textvariable=self.stop_record_hotkey_var, state="readonly", values=hotkeys, width=12).grid(
+            row=1, column=2, padx=(10, 0), sticky="w", pady=(6, 0)
+        )
         tb.Button(row0c, text="Применить хоткей", bootstyle="outline", command=self._on_apply_pause_hotkey).grid(
             row=0, column=3, padx=(10, 0)
+        )
+        tb.Button(row0c, text="Применить (стоп запись)", bootstyle="outline", command=self._on_apply_stop_record_hotkey).grid(
+            row=1, column=3, padx=(10, 0), pady=(6, 0)
         )
 
         # Scheduler
@@ -1046,13 +1098,14 @@ class UI:
         self.focus_steal_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "focus_steal_enabled", True)))
         tb.Checkbutton(
             row2c2,
-            text="Перехватывать фокус игры (в fullscreen лучше выключить)",
+            text="Перехватывать фокус игры (в fullscreen лучше выкл.)",
             variable=self.focus_steal_enabled_var,
             bootstyle="round-toggle",
         ).grid(row=0, column=0, sticky="w")
 
         row2d = tb.Frame(settings)
-        row2d.grid(row=10, column=0, sticky="ew", pady=(10, 0))
+        # Was overlapping with row2c (auto-confirm). Place after focus toggle.
+        row2d.grid(row=12, column=0, sticky="ew", pady=(10, 0))
         self.farm_without_route_var = tk.BooleanVar(value=bool(getattr(self.store, "farm_without_route", False)))
         tb.Checkbutton(
             row2d,
@@ -1072,6 +1125,7 @@ class UI:
         self._bind_unsaved(self.log_to_file_enabled_var)
         self._bind_unsaved(self.log_dir_var)
         self._bind_unsaved(self.pause_hotkey_var)
+        self._bind_unsaved(self.stop_record_hotkey_var)
         self._bind_unsaved(self.schedule_enabled_var)
         self._bind_unsaved(self.schedule_start_var)
         self._bind_unsaved(self.schedule_duration_var)
@@ -1091,6 +1145,19 @@ class UI:
             self._bind_unsaved(self.menu_roi_h)
             self._bind_unsaved(self.menu_threshold_var)
             self._bind_unsaved(self.menu_attempts_var)
+            self._bind_unsaved(self.confirm_roi_x)
+            self._bind_unsaved(self.confirm_roi_y)
+            self._bind_unsaved(self.confirm_roi_w)
+            self._bind_unsaved(self.confirm_roi_h)
+            self._bind_unsaved(self.confirm_thr_var)
+            self._bind_unsaved(self.gate_roi_x)
+            self._bind_unsaved(self.gate_roi_y)
+            self._bind_unsaved(self.gate_roi_w)
+            self._bind_unsaved(self.gate_roi_h)
+            self._bind_unsaved(self.gate_thr_var)
+            self._bind_unsaved(self.gate_timeout_var)
+            self._bind_unsaved(self.gate_margin_var)
+            self._bind_unsaved(self.gate_turn_step_var)
             self._bind_unsaved(self.death_enabled_var)
             self._bind_unsaved(self.death_roi_x)
             self._bind_unsaved(self.death_roi_y)
@@ -1392,9 +1459,94 @@ class UI:
         self.menu_attempts_var = tk.IntVar(value=int(getattr(self.store, "menu_autoclose_attempts", 2)))
         tb.Spinbox(rowm2, from_=1, to=5, textvariable=self.menu_attempts_var, width=6).grid(row=0, column=3, padx=(12, 0))
 
+        # --- Confirm popup (gate enter) ---
+        confirm_box = tb.Labelframe(detect_inner, text="Окно подтверждения входа (CONFIRM)", padding=12, bootstyle="secondary")
+        confirm_box.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        tb.Label(
+            confirm_box,
+            text="Выдели ROI на окне подтверждения (например на тексте/кнопке), затем сними шаблон.\n"
+            "В маршруте можно вставить шаг CONFIRM: бот подождёт появления окна и нажмёт Y.",
+            bootstyle="secondary",
+            wraplength=760,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w")
+
+        rowc = tb.Frame(confirm_box)
+        rowc.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        tb.Label(rowc, text="Confirm ROI (x, y, w, h)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.confirm_roi_x = tk.IntVar(value=int(getattr(self.store.confirm_popup_roi, "x", 0)))
+        self.confirm_roi_y = tk.IntVar(value=int(getattr(self.store.confirm_popup_roi, "y", 0)))
+        self.confirm_roi_w = tk.IntVar(value=int(getattr(self.store.confirm_popup_roi, "w", 1)))
+        self.confirm_roi_h = tk.IntVar(value=int(getattr(self.store.confirm_popup_roi, "h", 1)))
+        tb.Spinbox(rowc, from_=0, to=10000, textvariable=self.confirm_roi_x, width=6).grid(row=0, column=1, padx=(12, 6))
+        tb.Spinbox(rowc, from_=0, to=10000, textvariable=self.confirm_roi_y, width=6).grid(row=0, column=2, padx=6)
+        tb.Spinbox(rowc, from_=1, to=10000, textvariable=self.confirm_roi_w, width=6).grid(row=0, column=3, padx=6)
+        tb.Spinbox(rowc, from_=1, to=10000, textvariable=self.confirm_roi_h, width=6).grid(row=0, column=4, padx=6)
+        tb.Button(confirm_box, text="Выбрать Confirm ROI мышью", command=self._on_pick_confirm_roi, bootstyle="primary").grid(
+            row=2, column=0, sticky="ew", pady=(10, 0)
+        )
+        tb.Button(confirm_box, text="Сделать шаблон CONFIRM", command=self._on_capture_confirm_tpl, bootstyle="outline").grid(
+            row=3, column=0, sticky="ew", pady=(8, 0)
+        )
+        rowct = tb.Frame(confirm_box)
+        rowct.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        tb.Label(rowct, text="Порог", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.confirm_thr_var = tk.DoubleVar(value=float(getattr(self.store, "confirm_popup_threshold", 0.86)))
+        tb.Spinbox(rowct, from_=0.50, to=0.99, increment=0.01, textvariable=self.confirm_thr_var, width=8).grid(
+            row=0, column=1, padx=(12, 0)
+        )
+
+        # --- Gate (template + ROI) ---
+        gate_box = tb.Labelframe(detect_inner, text="Ворота (GATE: найти → повернуть камерой → клик)", padding=12, bootstyle="secondary")
+        gate_box.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        tb.Label(
+            gate_box,
+            text="1) Выдели ROI где обычно видны ворота. 2) Сними шаблон ворот (кусок ворот).\n"
+            "Шаг GATE в маршруте: бот зажмёт ПКМ, повернёт камеру к воротам и кликнет по ним.",
+            bootstyle="secondary",
+            wraplength=760,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w")
+
+        rowg = tb.Frame(gate_box)
+        rowg.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        tb.Label(rowg, text="Gate ROI (x,y,w,h)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.gate_roi_x = tk.IntVar(value=int(getattr(self.store.gate_roi, "x", 0)))
+        self.gate_roi_y = tk.IntVar(value=int(getattr(self.store.gate_roi, "y", 0)))
+        self.gate_roi_w = tk.IntVar(value=int(getattr(self.store.gate_roi, "w", 1)))
+        self.gate_roi_h = tk.IntVar(value=int(getattr(self.store.gate_roi, "h", 1)))
+        tb.Spinbox(rowg, from_=0, to=10000, textvariable=self.gate_roi_x, width=6).grid(row=0, column=1, padx=(12, 6))
+        tb.Spinbox(rowg, from_=0, to=10000, textvariable=self.gate_roi_y, width=6).grid(row=0, column=2, padx=6)
+        tb.Spinbox(rowg, from_=1, to=10000, textvariable=self.gate_roi_w, width=6).grid(row=0, column=3, padx=6)
+        tb.Spinbox(rowg, from_=1, to=10000, textvariable=self.gate_roi_h, width=6).grid(row=0, column=4, padx=6)
+        tb.Button(gate_box, text="Выбрать Gate ROI мышью", command=self._on_pick_gate_roi, bootstyle="primary").grid(
+            row=2, column=0, sticky="ew", pady=(10, 0)
+        )
+        tb.Button(gate_box, text="Сделать шаблон GATE", command=self._on_capture_gate_tpl, bootstyle="outline").grid(
+            row=3, column=0, sticky="ew", pady=(8, 0)
+        )
+        rowg2 = tb.Frame(gate_box)
+        rowg2.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        tb.Label(rowg2, text="Порог", bootstyle="secondary").grid(row=0, column=0, sticky="w")
+        self.gate_thr_var = tk.DoubleVar(value=float(getattr(self.store, "gate_threshold", 0.83)))
+        tb.Spinbox(rowg2, from_=0.50, to=0.99, increment=0.01, textvariable=self.gate_thr_var, width=8).grid(
+            row=0, column=1, padx=(12, 0)
+        )
+        tb.Label(rowg2, text="Timeout (сек)", bootstyle="secondary").grid(row=0, column=2, padx=(18, 0), sticky="w")
+        self.gate_timeout_var = tk.DoubleVar(value=float(getattr(self.store, "gate_seek_timeout_s", 6.0)))
+        tb.Spinbox(rowg2, from_=1.0, to=30.0, increment=0.5, textvariable=self.gate_timeout_var, width=8).grid(
+            row=0, column=3, padx=(12, 0)
+        )
+        tb.Label(rowg2, text="Центр (px)", bootstyle="secondary").grid(row=0, column=4, padx=(18, 0), sticky="w")
+        self.gate_margin_var = tk.IntVar(value=int(getattr(self.store, "gate_center_margin_px", 40)))
+        tb.Spinbox(rowg2, from_=5, to=300, textvariable=self.gate_margin_var, width=8).grid(row=0, column=5, padx=(12, 0))
+        tb.Label(rowg2, text="Шаг поворота (px)", bootstyle="secondary").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.gate_turn_step_var = tk.IntVar(value=int(getattr(self.store, "gate_turn_step_px", 120)))
+        tb.Spinbox(rowg2, from_=20, to=600, textvariable=self.gate_turn_step_var, width=8).grid(row=1, column=1, padx=(12, 0), pady=(8, 0))
+
         # --- Death detect + recovery ---
         death_box = tb.Labelframe(detect_inner, text="Смерть (детект + маршрут восстановления)", padding=12, bootstyle="secondary")
-        death_box.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        death_box.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         tb.Label(
             death_box,
             text="Шаг 1: выдели ROI на тексте/иконке смерти. Шаг 2: сделай шаблон. Шаг 3: выбери маршрут восстановления.",
@@ -1450,7 +1602,8 @@ class UI:
 
         # --- Damage/HP teleport mode ---
         dmg_box = tb.Labelframe(detect_inner, text="Детект по урону + HP% (ТП по урону)", padding=12, bootstyle="secondary")
-        dmg_box.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        # NOTE: keep rows unique; row=3 is used by Gate section above
+        dmg_box.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         tb.Label(
             dmg_box,
             text=(
@@ -1530,13 +1683,13 @@ class UI:
         self.hp_tp_enabled_var = tk.BooleanVar(value=bool(getattr(self.store, "hp_tp_enabled", True)))
         tb.Checkbutton(
             dmg_box,
-            text="ТП только если HP ниже порога",
+            text="Включить ТП по HP",
             variable=self.hp_tp_enabled_var,
             bootstyle="round-toggle",
             command=self._on_hp_tp_toggle_changed,
         ).grid(row=9, column=0, sticky="w", pady=(10, 0))
         rowh = tb.Frame(dmg_box)
-        rowh.grid(row=8, column=0, sticky="ew", pady=(10, 0))
+        rowh.grid(row=10, column=0, sticky="ew", pady=(10, 0))
         tb.Label(rowh, text="ROI HP полоски (x,y,w,h)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.hp_roi_x = tk.IntVar(value=int(getattr(self.store.hp_bar_roi, "x", 0)))
         self.hp_roi_y = tk.IntVar(value=int(getattr(self.store.hp_bar_roi, "y", 0)))
@@ -1547,11 +1700,11 @@ class UI:
         tb.Spinbox(rowh, from_=1, to=10000, textvariable=self.hp_roi_w, width=6).grid(row=0, column=3, padx=6)
         tb.Spinbox(rowh, from_=1, to=10000, textvariable=self.hp_roi_h, width=6).grid(row=0, column=4, padx=6)
         tb.Button(dmg_box, text="Выбрать ROI HP", command=self._on_pick_hp_roi, bootstyle="primary").grid(
-            row=9, column=0, sticky="ew", pady=(10, 0)
+            row=11, column=0, sticky="ew", pady=(10, 0)
         )
 
         rowh2 = tb.Frame(dmg_box)
-        rowh2.grid(row=10, column=0, sticky="ew", pady=(10, 0))
+        rowh2.grid(row=12, column=0, sticky="ew", pady=(10, 0))
         tb.Label(rowh2, text="Порог HP (%)", bootstyle="secondary").grid(row=0, column=0, sticky="w")
         self.hp_threshold_var = tk.IntVar(value=int(getattr(self.store, "hp_tp_threshold_pct", 70)))
         tb.Spinbox(rowh2, from_=1, to=99, textvariable=self.hp_threshold_var, width=8).grid(row=0, column=1, padx=(12, 0))
@@ -1662,6 +1815,9 @@ class UI:
         self.rb_steps_list.bind("<<ListboxSelect>>", lambda _e: self._rb_highlight_selected())
         self.rb_steps_list.bind("<Button-3>", lambda e: self._on_steps_right_click(e, self.rb_steps_list))
         self.rb_steps_list.bind("<Double-1>", lambda e: self._on_steps_double_click(e, self.rb_steps_list))
+        self.rb_steps_list.bind("<ButtonPress-1>", lambda e: self._on_steps_drag_start(e, self.rb_steps_list))
+        self.rb_steps_list.bind("<B1-Motion>", lambda e: self._on_steps_drag_move(e, self.rb_steps_list))
+        self.rb_steps_list.bind("<ButtonRelease-1>", lambda e: self._on_steps_drag_end(e, self.rb_steps_list))
 
         rb_btns = tb.Frame(rb_steps_box)
         rb_btns.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -1771,6 +1927,12 @@ class UI:
         for i, s in enumerate(getattr(self, "_editor_steps", []), start=1):
             if s.kind == "key":
                 label = f"{i}. KEY {s.key}  (delay {s.delay_s:.2f}s)"
+            elif s.kind == "confirm":
+                label = f"{i}. CONFIRM (timeout {getattr(s, 'timeout_s', 6.0):.1f}s)"
+            elif s.kind == "wait_range":
+                label = f"{i}. WAIT_RANGE ({getattr(s, 'min_s', 0.0):.1f}-{getattr(s, 'max_s', 0.0):.1f}s)"
+            elif s.kind == "gate":
+                label = f"{i}. GATE (seek+turn+click)"
             elif s.kind == "wait":
                 label = f"{i}. WAIT  (delay {s.delay_s:.2f}s)"
             else:
@@ -1783,6 +1945,12 @@ class UI:
                 for i, s in enumerate(getattr(self, "_editor_steps", []), start=1):
                     if s.kind == "key":
                         label = f"{i}. KEY {s.key}  (delay {s.delay_s:.2f}s)"
+                    elif s.kind == "confirm":
+                        label = f"{i}. CONFIRM (timeout {getattr(s, 'timeout_s', 6.0):.1f}s)"
+                    elif s.kind == "wait_range":
+                        label = f"{i}. WAIT_RANGE ({getattr(s, 'min_s', 0.0):.1f}-{getattr(s, 'max_s', 0.0):.1f}s)"
+                    elif s.kind == "gate":
+                        label = f"{i}. GATE (seek+turn+click)"
                     elif s.kind == "wait":
                         label = f"{i}. WAIT  (delay {s.delay_s:.2f}s)"
                     else:
@@ -1804,6 +1972,53 @@ class UI:
             return int(sel[0])
         except Exception:
             return None
+
+    def _on_steps_drag_start(self, evt, listbox: tk.Listbox) -> None:
+        try:
+            idx = int(listbox.nearest(evt.y))
+        except Exception:
+            return
+        self._steps_drag = {"src": idx, "last": idx}
+        try:
+            listbox.selection_clear(0, "end")
+            listbox.selection_set(idx)
+        except Exception:
+            pass
+        self._rb_highlight_selected()
+
+    def _on_steps_drag_move(self, evt, listbox: tk.Listbox) -> None:
+        if not hasattr(self, "_steps_drag") or not self._steps_drag:
+            return
+        try:
+            dst = int(listbox.nearest(evt.y))
+        except Exception:
+            return
+        src = int(self._steps_drag.get("src", dst))
+        last = int(self._steps_drag.get("last", src))
+        if dst == last or dst == src:
+            return
+        steps = list(getattr(self, "_editor_steps", []))
+        if not (0 <= src < len(steps) and 0 <= dst < len(steps)):
+            return
+        # Move one step at a time for stable feel.
+        item = steps.pop(src)
+        steps.insert(dst, item)
+        self._editor_steps = steps
+        self._steps_drag["src"] = dst
+        self._steps_drag["last"] = dst
+        self._render_steps()
+        try:
+            listbox.selection_clear(0, "end")
+            listbox.selection_set(dst)
+            listbox.see(dst)
+        except Exception:
+            pass
+
+    def _on_steps_drag_end(self, _evt, _listbox: tk.Listbox) -> None:
+        try:
+            self._steps_drag = None
+        except Exception:
+            pass
 
     def _on_steps_right_click(self, evt, listbox: tk.Listbox) -> None:
         idx = None
@@ -1830,12 +2045,17 @@ class UI:
 
         m.add_command(label="Редактировать delay...", command=lambda: self._edit_step_delay(idx))
         m.add_command(label="Редактировать key...", command=lambda: self._edit_step_key(idx))
+        m.add_command(label="Редактировать click...", command=lambda: self._edit_step_click(idx))
+        m.add_command(label="Редактировать CONFIRM...", command=lambda: self._edit_step_confirm(idx))
         m.add_separator()
         m.add_command(label="Дублировать", command=lambda: self._duplicate_step(idx))
         m.add_command(label="Удалить", command=lambda: self._delete_step(idx))
         m.add_separator()
         m.add_command(label="Вставить WAIT после", command=lambda: self._insert_wait_after(idx))
         m.add_command(label="Вставить KEY после", command=lambda: self._insert_key_after(idx))
+        m.add_command(label="Вставить CONFIRM после", command=lambda: self._insert_confirm_after(idx))
+        m.add_command(label="Вставить WAIT RANGE после", command=lambda: self._insert_wait_range_after(idx))
+        m.add_command(label="Вставить GATE после", command=lambda: self._insert_gate_after(idx))
 
         try:
             m.tk_popup(evt.x_root, evt.y_root)
@@ -1906,6 +2126,67 @@ class UI:
             return
         delay = self._rb_pick_delay_s() if hasattr(self, "_rb_pick_delay_s") else 0.2
         self._editor_steps.insert(idx + 1, RouteStep(kind="key", key=key.strip().lower(), delay_s=delay))
+        self._render_steps()
+
+    def _insert_confirm_after(self, idx: int) -> None:
+        try:
+            t = simpledialog.askfloat("CONFIRM", "Timeout (сек) ждать окно подтверждения:", initialvalue=6.0)
+        except Exception:
+            t = 6.0
+        if t is None:
+            return
+        delay = self._rb_pick_delay_s() if hasattr(self, "_rb_pick_delay_s") else 0.2
+        self._editor_steps.insert(idx + 1, RouteStep(kind="confirm", timeout_s=float(max(1.0, t)), delay_s=delay))
+        self._render_steps()
+
+    def _insert_wait_range_after(self, idx: int) -> None:
+        mn = simpledialog.askfloat("WAIT RANGE", "Мин (сек):", initialvalue=3.0)
+        if mn is None:
+            return
+        mx = simpledialog.askfloat("WAIT RANGE", "Макс (сек):", initialvalue=max(3.0, float(mn) + 2.0))
+        if mx is None:
+            return
+        self._editor_steps.insert(idx + 1, RouteStep(kind="wait_range", min_s=float(mn), max_s=float(mx), delay_s=0.0))
+        self._render_steps()
+
+    def _insert_gate_after(self, idx: int) -> None:
+        self._editor_steps.insert(idx + 1, RouteStep(kind="gate", delay_s=0.2))
+        self._render_steps()
+
+    def _edit_step_click(self, idx: int) -> None:
+        if not (0 <= idx < len(self._editor_steps)):
+            return
+        step = self._editor_steps[idx]
+        if step.kind != "click":
+            if not messagebox.askyesno("CLICK", "Этот шаг не CLICK. Превратить его в CLICK шаг?"):
+                return
+            step.kind = "click"
+        x = simpledialog.askinteger("CLICK", "rel_x (px):", initialvalue=int(getattr(step, "rel_x", 0)))
+        if x is None:
+            return
+        y = simpledialog.askinteger("CLICK", "rel_y (px):", initialvalue=int(getattr(step, "rel_y", 0)))
+        if y is None:
+            return
+        btn = simpledialog.askstring("CLICK", "Кнопка (left/right/middle/x1/x2):", initialvalue=str(getattr(step, "button", "left") or "left"))
+        if not btn:
+            return
+        step.rel_x = int(x)
+        step.rel_y = int(y)
+        step.button = str(btn).strip().lower()
+        self._render_steps()
+
+    def _edit_step_confirm(self, idx: int) -> None:
+        if not (0 <= idx < len(self._editor_steps)):
+            return
+        step = self._editor_steps[idx]
+        if step.kind != "confirm":
+            if not messagebox.askyesno("CONFIRM", "Этот шаг не CONFIRM. Превратить его в CONFIRM шаг?"):
+                return
+            step.kind = "confirm"
+        t = simpledialog.askfloat("CONFIRM", "Timeout (сек):", initialvalue=float(getattr(step, "timeout_s", 6.0)))
+        if t is None:
+            return
+        step.timeout_s = float(max(1.0, t))
         self._render_steps()
 
     def _on_select_active_route(self, _evt=None) -> None:
@@ -2010,6 +2291,10 @@ class UI:
             self.record_insert_wait_btn.configure(state=("normal" if recording else "disabled"))
         except Exception:
             pass
+        try:
+            self.record_insert_confirm_btn.configure(state=("normal" if recording else "disabled"))
+        except Exception:
+            pass
 
     def _on_record_insert_wait(self) -> None:
         if self._recorder is None:
@@ -2025,6 +2310,20 @@ class UI:
             self.root.after(0, self._render_steps)
         except Exception as e:
             self.log(f"WAIT: ошибка {e!r}")
+
+    def _on_record_insert_confirm(self) -> None:
+        """
+        Insert a CONFIRM marker step: wait for confirm popup template, then press confirm key.
+        """
+        try:
+            s = float(self.record_confirm_timeout_var.get())
+        except Exception:
+            s = 6.0
+        s = max(1.0, min(30.0, float(s)))
+        step = RouteStep(kind="confirm", timeout_s=float(s), delay_s=0.10)
+        self._editor_steps.append(step)
+        self.log(f"CONFIRM вставлен (timeout {s:.1f} сек)")
+        self.root.after(0, self._render_steps)
 
     def _on_start_recording(self, auto: bool = False) -> None:
         if self._recorder is not None:
@@ -2060,6 +2359,11 @@ class UI:
             self.log("Фокус на игре. Запись маршрута активна: клики/клавиши будут добавляться в список шагов.")
         else:
             self.log("Запись маршрута активна.")
+        try:
+            hk = str(getattr(self.store, "stop_record_hotkey", "f9") or "f9").strip().upper()
+        except Exception:
+            hk = "F9"
+        self.log(f"Подсказка: чтобы быстро остановить запись в игре — нажми {hk}.")
 
         cfg = RecorderConfig(min_step_delay_s=0.05)
 
@@ -2448,6 +2752,10 @@ class UI:
             self.store.pause_hotkey = str(getattr(self, "pause_hotkey_var").get() or "f8").strip().lower()
         except Exception:
             pass
+        try:
+            self.store.stop_record_hotkey = str(getattr(self, "stop_record_hotkey_var").get() or "f9").strip().lower()
+        except Exception:
+            pass
         # Scheduler
         try:
             self.store.schedule_enabled = bool(getattr(self, "schedule_enabled_var").get())
@@ -2543,6 +2851,41 @@ class UI:
             self.store.menu_autoclose_attempts = safe_int(
                 self.menu_attempts_var, int(getattr(self.store, "menu_autoclose_attempts", 2))
             )
+        except Exception:
+            pass
+
+        # Confirm popup (gate enter)
+        try:
+            self.store.confirm_popup_roi.x = safe_int(self.confirm_roi_x, int(self.store.confirm_popup_roi.x))
+            self.store.confirm_popup_roi.y = safe_int(self.confirm_roi_y, int(self.store.confirm_popup_roi.y))
+            self.store.confirm_popup_roi.w = safe_int(self.confirm_roi_w, int(self.store.confirm_popup_roi.w))
+            self.store.confirm_popup_roi.h = safe_int(self.confirm_roi_h, int(self.store.confirm_popup_roi.h))
+            self.store.confirm_popup_threshold = safe_float(
+                self.confirm_thr_var, float(getattr(self.store, "confirm_popup_threshold", 0.86))
+            )
+            self.store.confirm_popup_tpl_path = str(
+                getattr(self.store, "confirm_popup_tpl_path", "confirm_popup_tpl.png") or "confirm_popup_tpl.png"
+            )
+        except Exception:
+            pass
+
+        # Gate assist (rotate+click)
+        try:
+            self.store.gate_roi.x = safe_int(self.gate_roi_x, int(self.store.gate_roi.x))
+            self.store.gate_roi.y = safe_int(self.gate_roi_y, int(self.store.gate_roi.y))
+            self.store.gate_roi.w = safe_int(self.gate_roi_w, int(self.store.gate_roi.w))
+            self.store.gate_roi.h = safe_int(self.gate_roi_h, int(self.store.gate_roi.h))
+            self.store.gate_threshold = safe_float(self.gate_thr_var, float(getattr(self.store, "gate_threshold", 0.83)))
+            self.store.gate_seek_timeout_s = safe_float(
+                self.gate_timeout_var, float(getattr(self.store, "gate_seek_timeout_s", 6.0))
+            )
+            self.store.gate_center_margin_px = safe_int(
+                self.gate_margin_var, int(getattr(self.store, "gate_center_margin_px", 40))
+            )
+            self.store.gate_turn_step_px = safe_int(
+                self.gate_turn_step_var, int(getattr(self.store, "gate_turn_step_px", 120))
+            )
+            self.store.gate_tpl_path = str(getattr(self.store, "gate_tpl_path", "gate_tpl.png") or "gate_tpl.png")
         except Exception:
             pass
 
@@ -2726,6 +3069,15 @@ class UI:
         except Exception:
             pass
         self._register_pause_hotkey()
+
+    def _on_apply_stop_record_hotkey(self) -> None:
+        # Persist and re-register.
+        try:
+            self.store.stop_record_hotkey = str(self.stop_record_hotkey_var.get() or "f9").strip().lower()
+            self.store.save()
+        except Exception:
+            pass
+        self._register_stop_record_hotkey()
 
     def _on_autobuy_new_buy_route(self) -> None:
         """
@@ -3392,6 +3744,80 @@ class UI:
             messagebox.showerror("Ошибка", str(e))
             return
 
+    def _on_pick_confirm_roi(self) -> None:
+        if not self._ensure_window_selected():
+            return
+        hwnd = int(getattr(self.store, "window_hwnd", 0) or 0)
+        if hwnd == 0:
+            messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
+            return
+
+        def apply_roi(x: int, y: int, ww: int, hh: int) -> None:
+            self.confirm_roi_x.set(x)
+            self.confirm_roi_y.set(y)
+            self.confirm_roi_w.set(ww)
+            self.confirm_roi_h.set(hh)
+            self._on_save_settings()
+            self.log("Confirm ROI сохранён")
+
+        try:
+            self._open_live_roi_overlay(hwnd, title="CONFIRM ROI", on_apply=apply_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
+
+    def _on_capture_confirm_tpl(self) -> None:
+        if not self._ensure_window_selected():
+            return
+        self._on_save_settings()
+        try:
+            path = self.bot.capture_confirm_popup_template()
+            self._show_image_popup(path, title="confirm_popup_tpl.png (превью)")
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
+            return
+
+    def _on_pick_gate_roi(self) -> None:
+        if not self._ensure_window_selected():
+            return
+        hwnd = int(getattr(self.store, "window_hwnd", 0) or 0)
+        if hwnd == 0:
+            messagebox.showerror("Ошибка", "Выбери окно вида 'Название (0x...)' и нажми 'Подтвердить'.")
+            return
+
+        def apply_roi(x: int, y: int, ww: int, hh: int) -> None:
+            self.gate_roi_x.set(x)
+            self.gate_roi_y.set(y)
+            self.gate_roi_w.set(ww)
+            self.gate_roi_h.set(hh)
+            self._on_save_settings()
+            self.log("Gate ROI сохранён")
+
+        try:
+            self._open_live_roi_overlay(hwnd, title="GATE ROI", on_apply=apply_roi)
+        except Exception:
+            cap = self._capture_client_image_pil(hwnd)
+            if cap is None:
+                messagebox.showerror("Ошибка", "Не удалось открыть выбор ROI.")
+                return
+            pil, w, h = cap
+            self._open_roi_selector_for_callback(pil, window_w=w, window_h=h, on_apply=apply_roi)
+
+    def _on_capture_gate_tpl(self) -> None:
+        if not self._ensure_window_selected():
+            return
+        self._on_save_settings()
+        try:
+            path = self.bot.capture_gate_template()
+            self._show_image_popup(path, title="gate_tpl.png (превью)")
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
+            return
+
     def _on_pick_death_roi(self) -> None:
         if not self._ensure_window_selected():
             return
@@ -3700,12 +4126,21 @@ class UI:
     def _tick_status(self) -> None:
         # Pump global hotkeys (WM_HOTKEY)
         try:
-            if getattr(self, "_hotkey_registered", False):
+            # Process all pending WM_HOTKEY messages (not just one).
+            while True:
                 msg = win32gui.PeekMessage(None, win32con.WM_HOTKEY, win32con.WM_HOTKEY, win32con.PM_REMOVE)
-                if msg and msg[1] == win32con.WM_HOTKEY:
-                    hotkey_id = int(msg[2])
-                    if hotkey_id == int(getattr(self, "_hotkey_id_pause", 9001)):
-                        self.bot.toggle_pause()
+                if not msg or msg[1] != win32con.WM_HOTKEY:
+                    break
+                hotkey_id = int(msg[2])
+                if hotkey_id == int(getattr(self, "_hotkey_id_pause", 9001)):
+                    self.bot.toggle_pause()
+                elif hotkey_id == int(getattr(self, "_hotkey_id_stop_record", 9002)):
+                    # Stop recording from anywhere (while game is active)
+                    try:
+                        if self._recorder is not None:
+                            self.root.after(0, self._on_stop_recording)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
