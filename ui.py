@@ -4,6 +4,8 @@ import queue
 import time
 import tkinter as tk
 import os
+import threading
+import sys
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk, filedialog
 from typing import Callable
@@ -32,7 +34,19 @@ from window_manager import (
     parse_window_item,
 )
 
-APP_BUILD = "2026-04-27 gate-ui"
+from updater import (
+    download_file,
+    find_asset,
+    get_latest_release,
+    is_newer,
+    run_bat_and_exit,
+    stage_update_from_zip,
+)
+
+APP_VERSION = "0.1.1"
+APP_BUILD = "2026-04-27"
+GITHUB_OWNER = "drixed"
+GITHUB_REPO = "RAVEN-BOT"
 
 
 class UI:
@@ -54,8 +68,10 @@ class UI:
         self._routebuilder_marker_to_step: dict[int, int] = {}
         self._routebuilder_drag: dict | None = None
         self._steps_menu: tk.Menu | None = None
+        self._update_status_var = tk.StringVar(value=f"Версия: v{APP_VERSION}")
+        self._update_info: tuple[str, str] | None = None  # (tag, zip_url)
 
-        self.root.title(f"RAVEN BOT [{APP_BUILD}]")
+        self.root.title(f"RAVEN BOT v{APP_VERSION} [{APP_BUILD}]")
         # Bigger default so left panel controls fit comfortably.
         self.root.geometry("1400x900")
         self.root.minsize(1200, 780)
@@ -1113,6 +1129,17 @@ class UI:
             variable=self.farm_without_route_var,
             command=self._on_farm_without_route_toggle_changed,
         ).grid(row=0, column=0, sticky="w")
+
+        # Updater (GitHub Releases)
+        upd_row = tb.Frame(settings)
+        upd_row.grid(row=98, column=0, sticky="ew", pady=(10, 0))
+        upd_row.grid_columnconfigure(1, weight=1)
+        tb.Button(upd_row, text="Проверить обновления", command=self._on_check_updates, bootstyle="outline").grid(
+            row=0, column=0, sticky="w"
+        )
+        tb.Label(upd_row, textvariable=self._update_status_var, bootstyle="secondary").grid(
+            row=0, column=1, sticky="w", padx=(12, 0)
+        )
 
         # Save button at bottom of "Основное"
         save_row = tb.Frame(settings)
@@ -2724,6 +2751,77 @@ class UI:
             # keep current if possible, else set first item
             if not cur:
                 self.windows_combo.set(items[0])
+
+    def _on_check_updates(self) -> None:
+        """
+        Checks GitHub Releases for a newer version and (for frozen builds) offers to download+install.
+        """
+
+        def ui_set(msg: str) -> None:
+            try:
+                self._update_status_var.set(msg)
+            except Exception:
+                pass
+
+        def worker() -> None:
+            ui_set("Проверяю обновления…")
+            try:
+                rel = get_latest_release(GITHUB_OWNER, GITHUB_REPO)
+            except Exception as e:
+                self.log(f"Updater: ошибка проверки релиза: {e!r}")
+                self.root.after(0, lambda: ui_set("Ошибка проверки обновлений"))
+                return
+
+            tag = (rel.tag or "").strip()
+            zip_asset = find_asset(rel, name="RAVEN_BOT.zip")
+            if not tag or zip_asset is None or not zip_asset.url:
+                self.root.after(0, lambda: ui_set("Нет подходящего релиза (нужен RAVEN_BOT.zip)"))
+                return
+
+            if not is_newer(tag, APP_VERSION):
+                self.root.after(0, lambda: ui_set(f"Уже последняя версия ({tag})"))
+                return
+
+            def ask_install() -> None:
+                ui_set(f"Доступно обновление: {tag}")
+                if not getattr(sys, "frozen", False):
+                    messagebox.showinfo(
+                        "Обновление",
+                        f"Доступно обновление {tag}, но авто-установка работает только в .exe сборке.\n"
+                        f"Скачай новый билд из GitHub Releases и запусти его.",
+                    )
+                    return
+
+                if not messagebox.askyesno("Обновление", f"Найдено обновление {tag}. Скачать и установить сейчас?"):
+                    return
+
+                try:
+                    ui_set("Скачиваю…")
+                    app_dir = Path(sys.executable).resolve().parent
+                    zip_path = app_dir / "update_download.zip"
+                    download_file(zip_asset.url, zip_path)
+                    ui_set("Распаковываю…")
+                    bat = stage_update_from_zip(zip_path, exe_name=Path(sys.executable).name)
+                except Exception as e:
+                    self.log(f"Updater: ошибка установки: {e!r}")
+                    ui_set("Ошибка установки обновления")
+                    messagebox.showerror("Обновление", f"Не удалось установить обновление: {e!r}")
+                    return
+
+                messagebox.showinfo("Обновление", "Обновление скачано. Сейчас приложение закроется и запустится новая версия.")
+                try:
+                    self.root.destroy()
+                except Exception:
+                    pass
+                run_bat_and_exit(bat)
+
+            self.root.after(0, ask_install)
+
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception:
+            # fallback: run synchronously
+            worker()
 
     def _on_save_settings(self) -> None:
         def safe_int(var, fallback: int) -> int:

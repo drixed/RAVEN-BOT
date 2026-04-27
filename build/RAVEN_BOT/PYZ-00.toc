@@ -1201,6 +1201,7 @@
   ('unittest.signals', 'C:\\Python314\\Lib\\unittest\\signals.py', 'PYMODULE'),
   ('unittest.suite', 'C:\\Python314\\Lib\\unittest\\suite.py', 'PYMODULE'),
   ('unittest.util', 'C:\\Python314\\Lib\\unittest\\util.py', 'PYMODULE'),
+  ('updater', 'F:\\RAVEN BOT\\updater.py', 'PYMODULE'),
   ('urllib', 'C:\\Python314\\Lib\\urllib\\__init__.py', 'PYMODULE'),
   ('urllib.error', 'C:\\Python314\\Lib\\urllib\\error.py', 'PYMODULE'),
   ('urllib.parse', 'C:\\Python314\\Lib\\urllib\\parse.py', 'PYMODULE'),
